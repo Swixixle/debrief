@@ -19,7 +19,20 @@ function resolveDistPublic(): string {
 }
 
 export function serveStatic(app: Express) {
+  // TEMP: debug Render static/CSS — remove after paths are confirmed in logs
+  const cwdPublic = path.join(process.cwd(), "dist", "public");
+  console.log("[static] cwd:", process.cwd());
+  console.log("[static] __dirname:", __dirname);
+  console.log("[static] resolved dist/public:", cwdPublic);
+  console.log("[static] index.html exists:", fs.existsSync(path.join(cwdPublic, "index.html")));
+
   const distPath = resolveDistPublic();
+  console.log("[static] chosen distPath:", distPath);
+  console.log(
+    "[static] chosen index.html exists:",
+    fs.existsSync(path.join(distPath, "index.html")),
+  );
+
   if (!fs.existsSync(path.join(distPath, "index.html"))) {
     throw new Error(
       `Could not find the Vite build output (index.html) in ${distPath}. ` +
