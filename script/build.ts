@@ -51,12 +51,10 @@ async function buildAll() {
   ];
   const externals = allDeps.filter((dep) => !allowlist.includes(dep));
 
-  await esbuild({
-    entryPoints: ["server/index.ts"],
-    platform: "node",
+  const esbuildOpts = {
+    platform: "node" as const,
     bundle: true,
-    format: "cjs",
-    outfile: "dist/index.cjs",
+    format: "cjs" as const,
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -65,7 +63,20 @@ async function buildAll() {
     alias: {
       "@shared": path.resolve(process.cwd(), "shared"),
     },
-    logLevel: "info",
+    logLevel: "info" as const,
+  };
+
+  await esbuild({
+    ...esbuildOpts,
+    entryPoints: ["server/index.ts"],
+    outfile: "dist/index.cjs",
+  });
+
+  console.log("building analyzer worker bundle...");
+  await esbuild({
+    ...esbuildOpts,
+    entryPoints: ["server/analyzer-worker-entry.ts"],
+    outfile: "dist/worker.cjs",
   });
 }
 

@@ -1,22 +1,60 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Create env group "debrief-secrets" in the dashboard (OpenAI, Clerk, Stripe, PYTHON_EXEC_PATH, etc.).
+# Web + worker need the Python analyzer at runtime; use a Render native runtime with Python available
+# or install Python in buildCommand if your stack requires it.
+
 services:
   - type: web
-    name: debrief
-    env: node
-    buildCommand: npm ci && pip install -e . && npm run build
+    name: debrief-api
+    runtime: node
+    buildCommand: npm install && npm run build
     startCommand: node dist/index.cjs
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PYTHON_EXEC_PATH
-        value: python3
+      - key: DEBRIEF_USE_BULLMQ
+        value: "1"
+      - key: DEBRIEF_RUN_ANALYZER_WORKER
+        value: "0"
       - key: DATABASE_URL
-        sync: false
-      - key: API_KEY
-        sync: false
-      - key: ADMIN_KEY
-        sync: false
+        fromDatabase:
+          name: debrief-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: debrief-redis
+          type: redis
+          property: connectionString
+      - fromGroup: debrief-secrets
+
+  - type: worker
+    name: debrief-worker
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node dist/worker.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEBRIEF_USE_BULLMQ
+        value: "1"
+      - key: DEBRIEF_RUN_ANALYZER_WORKER
+        value: "1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: debrief-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: debrief-redis
+          type: redis
+          property: connectionString
+      - fromGroup: debrief-secrets
+
+  - type: redis
+    name: debrief-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
 
 databases:
   - name: debrief-db
-    databaseName: debrief
-    user: debrief
+    plan: free
