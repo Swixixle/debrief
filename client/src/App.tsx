@@ -11,6 +11,9 @@ import ProjectList from "@/pages/project-list";
 import ProjectDetails from "@/pages/project-details";
 import ProjectProgress from "@/pages/project-progress";
 import CiFeed from "@/pages/ci-feed";
+import Settings from "@/pages/settings";
+import Billing from "@/pages/billing";
+import BillingSuccess from "@/pages/billing-success";
 
 function Router() {
   return (
@@ -21,6 +24,9 @@ function Router() {
       <Route path="/projects/:id/progress" component={ProjectProgress} />
       <Route path="/projects/:id" component={ProjectDetails} />
       <Route path="/ci" component={CiFeed} />
+      <Route path="/settings" component={Settings} />
+      <Route path="/billing/success" component={BillingSuccess} />
+      <Route path="/billing" component={Billing} />
       <Route component={NotFound} />
     </Switch>
   );

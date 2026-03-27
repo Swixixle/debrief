@@ -30,6 +30,8 @@ build/
 # Node
 node_modules/
 dist/
+# Bundled GitHub Action (see .github/debrief-action)
+!/.github/debrief-action/dist/
 .next/
 .turbo/
 

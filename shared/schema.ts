@@ -1,19 +1,44 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, index, uuid, real } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, jsonb, index, uuid, real } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  clerkUserId: text("clerk_user_id"),
+  clerkUserId: text("clerk_user_id").unique(),
   email: text("email"),
   stripeCustomerId: text("stripe_customer_id"),
-  creditsRemaining: integer("credits_remaining").notNull().default(3),
+  /** 999999 = unlimited while `DEBRIEF_BILLING_ACTIVE` is off; live pricing uses lower defaults for new users. */
+  creditsRemaining: integer("credits_remaining").notNull().default(999_999),
   tier: text("tier").notNull().default("free"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("users_clerk_idx").on(table.clerkUserId),
 ]);
+
+export const apiKeys = pgTable("api_keys", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  keyHash: text("key_hash").notNull().unique(),
+  keyPrefix: text("key_prefix").notNull(),
+  label: text("label").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+}, (table) => [
+  index("api_keys_user_idx").on(table.userId, table.createdAt),
+]);
+
+export const usersRelations = relations(users, ({ many }) => ({
+  apiKeys: many(apiKeys),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
+}));
 
 export const creditTransactions = pgTable("credit_transactions", {
   id: serial("id").primaryKey(),
@@ -159,6 +184,7 @@ export const insertCiJobSchema = createInsertSchema(ciJobs).omit({ id: true, cre
 export const insertCertificateSchema = createInsertSchema(certificates).omit({ id: true, createdAt: true, issuedAt: true });
 
 export type User = typeof users.$inferSelect;
+export type ApiKeyRow = typeof apiKeys.$inferSelect;
 export type CreditTransaction = typeof creditTransactions.$inferSelect;
 export type RunRow = typeof runs.$inferSelect;
 export type Project = typeof projects.$inferSelect;

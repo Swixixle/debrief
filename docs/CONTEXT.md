@@ -89,6 +89,46 @@ Ingestion router (`server/ingestion/ingest.ts`): all input types normalized to a
 
 Project **analyze** and **clone-analyze** run through `ingest()` then the existing Python pipeline on that directory (no duplicate clone in `runAnalysis`). **Redis** content-hash cache (`server/cache/run-cache.ts`): 24h TTL; hits skip the analyzer and reuse stored artifacts; `cache_hit` in `run_metadata`; UI banner “Returned from cache”. Each successful (non-cached) run inserts a **`runs`** row (metrics + `analysis_id` link). **`POST /api/ingest/audio`**: multipart → transcript + hash (optional `repoUrl` reserved for future job enqueue).
 
-BullMQ worker file **`server/queue/analyzer-worker.ts`** is a stub until jobs are moved off the API process; queue remains **`server/queue/analyzer-queue.ts`**.
+BullMQ worker **`server/queue/analyzer-worker.ts`** runs the full pipeline (ingest → cache check → `runProjectAnalysis`); start API with **`DEBRIEF_USE_BULLMQ=1`**, **`REDIS_URL`**, and a separate process (or same host) with **`DEBRIEF_RUN_ANALYZER_WORKER=1`**. Queue name **`debrief-analyzer`**. **`server/runProjectAnalysis.ts`** holds the Python + persistence path shared with Express.
 
-Planned but not fully landed in this commit: WebSocket job progress, `GET /api/jobs/:jobId`, Clerk/Stripe enforcement, Tauri tray animations — see repo issues / next sprint.
+WebSocket **`/ws?jobId=`** — **`server/ws.ts`**, `initWebSocketServer` from **`server/index.ts`**. **`GET /api/jobs/:jobId`** for polling. **`POST /api/projects`** returns **202** `{ projectId, jobId }` when the queue is enabled (otherwise **201** + sync follow-up **`/analyze`** as before). Client: **`ProgressPanel`** + live progress.
+
+GitHub Action stub: **`.github/debrief-action/`** (`ncc`-bundled `dist/index.js`). Clerk / Stripe / API keys / Tauri tray: still to productize — see issues.
+
+---
+
+**Production pipeline complete — March 2026**
+
+BullMQ worker: full pipeline, not stub. Progress events via WebSocket. Cache check before every run.
+
+Auth: Clerk (planned). Soft auth on analyze, hard auth on billing/keys. Anonymous users: 3 free credits via Redis session tracking (planned). Authenticated users: 3 on account creation.
+
+Billing: Stripe (planned). Credit packs + subscription. Deduct on enqueue, refund on hard failure. Credits in nav.
+
+API keys: `dk_` prefix, SHA-256 storage (planned). Powers GitHub Action.
+
+GitHub Action: `.github/debrief-action/` — posts to Debrief API; full PR comment integration when public API launches.
+
+Tauri: system tray + native notification on run complete (planned). `window.__TAURI__` guard for web compatibility.
+
+WebSocket: `ws://host/ws?jobId=` — real-time progress from worker to client. Progress panel replaces spinner for queued creates.
+
+---
+
+**Auth + billing infrastructure — March 2026**
+
+Clerk: `@clerk/clerk-react` + `@clerk/express` — soft `clerkMiddleware` when `CLERK_SECRET_KEY` is set; **`/api/keys`** uses JSON **401** session guard (no redirect). Anonymous users run analyses as before. User row upsert on Clerk traffic + explicit insert on first API key creation. `users.credits_remaining` defaults to **999999** (unlimited “off” state); `clerk_user_id` is **unique**.
+
+Stripe: `server/billing/stripe.ts`, **`POST /api/billing/checkout`**, **`GET /api/billing/credits`**, **`GET /api/billing/products`**, **`POST /api/billing/webhook`** (raw body, registered before `express.json`). **`DEBRIEF_BILLING_ACTIVE=1`** turns on deduction in `checkCredits` / `refundCredits`; otherwise all checks return ok.
+
+Credits: **`CreditBadge`** hidden until `billingActive` is true. **`/billing`** shows placeholder tiers; live Stripe prices when configured; buttons gated on billing + sign-in.
+
+API keys: **`api_keys`** table; **`dk_`** prefix; SHA-256; **`apiKeyAuth`** runs before Clerk on all routes; **`/api/v1/*`** accepts **Bearer dk_** or Clerk session.
+
+Public API v1: **`server/routes/api-v1.ts`** mounted at **`/api/v1`** — analyze, jobs, project, markdown report.
+
+Settings: **`/settings`** — keys CRUD, account, integrations hub. History nudge in **`DebriefReport`** when Clerk is configured.
+
+Tauri: tray id **`main`**, **`tauri-plugin-notification`**, commands **`notify_complete`** / **`update_tray_tooltip`**; client uses **`__TAURI_INTERNALS__`** guard.
+
+Integrations doc: **`docs/INTEGRATIONS.md`**. Stable external surface: **`/api/v1`** + API keys.

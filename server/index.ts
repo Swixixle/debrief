@@ -1,8 +1,13 @@
-import express, { type Request, Response, NextFunction } from "express";
+import express, { type Request, type Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { getConfig, getBootReport } from "./config";
+import { initWebSocketServer } from "./ws";
+import { handleStripeWebhook } from "./billing/webhook";
+import { apiKeyAuth } from "./middleware/apiKeyAuth";
+import { upsertUserMiddleware } from "./middleware/upsertUser";
+import { withClerk } from "./middleware/clerk";
 
 // Load and validate configuration
 const config = getConfig();
@@ -18,6 +23,14 @@ declare module "http" {
   }
 }
 
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  (req: Request, res: Response) => {
+    void handleStripeWebhook(req, res);
+  },
+);
+
 app.use(
   express.json({
     verify: (req, _res, buf) => {
@@ -27,6 +40,10 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+app.use(apiKeyAuth);
+app.use(withClerk);
+app.use(upsertUserMiddleware);
 
 // CORS Configuration - secure cross-origin requests
 app.use((req, res, next) => {
@@ -84,11 +101,15 @@ app.use((req, res, next) => {
 
   // Content-Security-Policy (CSP)
   // Note: This is a balanced policy that allows the app to function while providing security
+  const clerkAndPaymentsConnect =
+    "https://*.clerk.com https://*.clerk.accounts.dev https://api.clerk.com https://api.stripe.com https://m.stripe.network https://js.stripe.com";
+  const clerkImages = "https://img.clerk.com";
+
   const cspDirectives = [
     "default-src 'self'",
-    "img-src 'self' data: https:",
+    `img-src 'self' data: https: ${clerkImages}`,
     "font-src 'self' data:",
-    "connect-src 'self' https://api.github.com https://github.com",
+    `connect-src 'self' https://api.github.com https://github.com ${clerkAndPaymentsConnect}`,
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -97,15 +118,16 @@ app.use((req, res, next) => {
   // In development, be more permissive for hot reload and Vite
   if (!isProduction) {
     cspDirectives.push(
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Vite dev requires these
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.com", // Vite + Clerk
       "style-src 'self' 'unsafe-inline'",
-      "connect-src 'self' ws: wss: https://api.github.com https://github.com"
+      `connect-src 'self' ws: wss: https://api.github.com https://github.com ${clerkAndPaymentsConnect}`,
     );
   } else {
     // Production: More restrictive CSP
     cspDirectives.push(
-      "script-src 'self'", // No unsafe-inline/eval in production
-      "style-src 'self' 'unsafe-inline'" // unsafe-inline needed for styled components
+      `script-src 'self' https://*.clerk.com`, // Clerk components
+      "style-src 'self' 'unsafe-inline'", // unsafe-inline needed for styled components
+      `connect-src 'self' wss: https://api.github.com https://github.com ${clerkAndPaymentsConnect}`,
     );
   }
 
@@ -161,6 +183,13 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  initWebSocketServer(httpServer);
+
+  if (process.env.DEBRIEF_RUN_ANALYZER_WORKER === "1") {
+    const { createAnalyzerWorker } = await import("./queue/analyzer-worker");
+    const w = createAnalyzerWorker();
+    if (w) log("BullMQ analyzer worker started", "analyzer-worker");
+  }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

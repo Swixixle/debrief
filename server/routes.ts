@@ -1,18 +1,16 @@
 import type { Express, Request, Response } from "express";
-import { createServer, type Server } from "http";
+import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { matchCloneAnalyzeUrl } from "@shared/cloneAnalyzeUrl";
 import os from "node:os";
 import { z } from "zod";
 import multer from "multer";
-import { spawn } from "child_process";
 import path from "path";
 import fs from "fs/promises";
 import { existsSync, readFileSync, appendFileSync, mkdirSync, createReadStream } from "fs";
 import crypto from "crypto";
 import { processOneJob, startWorkerLoop, getDiskStatus } from "./ci-worker";
-import { getLatestAnalyzerRunDir } from "./analyzerRunDir";
 import { 
   generateEvidenceBundle, 
   generateTenantKeyPair, 
@@ -25,28 +23,15 @@ import {
   assertLocalPathAllowedForIngest,
 } from "./ingestion/ingest";
 import type { IngestInput, IngestResult } from "./ingestion/types";
-import {
-  computeContentHash,
-  getCachedRun,
-  setCachedRun,
-  buildCachedRunFromArtifacts,
-} from "./cache/run-cache";
-import { extractRunSummary } from "./runMetrics";
+import { logAnalyzerEvent as logEvent } from "./analyzerLog";
+import { runProjectAnalysis } from "./runProjectAnalysis";
+import { analyzerQueue } from "./queue/analyzer-queue";
+import type { AnalyzerJobData } from "./queue/analyzer-worker";
+import { progressMessage } from "./queue/job-progress";
 import type { Project } from "@shared/schema";
-
-const LOG_DIR = path.resolve(process.cwd(), "out", "_log");
-const LOG_FILE = path.join(LOG_DIR, "analyzer.ndjson");
-
-function logEvent(projectId: number, event: string, detail?: Record<string, unknown>) {
-  mkdirSync(LOG_DIR, { recursive: true });
-  const entry = {
-    ts: new Date().toISOString(),
-    projectId,
-    event,
-    ...detail,
-  };
-  appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n");
-}
+import { mountBillingRoutes } from "./billing/routes";
+import { mountApiKeyRoutes } from "./routes/api-keys";
+import { apiV1Router } from "./routes/api-v1";
 
 function logAdminEvent(event: string, detail?: Record<string, unknown>) {
   logEvent(0, event, detail);
@@ -69,8 +54,6 @@ type IngestSidecar = {
   sourceUrl?: string;
   warnings?: string[];
 };
-const ingestSidecarByProject = new Map<number, IngestSidecar>();
-
 function sidecarFromIngestResult(p: IngestResult): IngestSidecar {
   return {
     inputType: p.inputType,
@@ -101,9 +84,6 @@ async function ingestInputForStoredProject(project: Project): Promise<IngestInpu
   throw new Error(`Cannot derive ingest input for project mode: ${mode}`);
 }
 
-const LEARNER_AUDIO_BANNER =
-  "> **Note:** This analysis is based on your voice description, not source code. All claims are INFERRED until you connect a repository.\n\n";
-
 const ingestPayloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("github"), url: z.string().min(1) }),
   z.object({ type: z.literal("local"), path: z.string().min(1) }),
@@ -121,6 +101,10 @@ const ingestAnalyzeBodySchema = z.object({
   ingest: ingestPayloadSchema,
   name: z.string().optional(),
   reportAudience: z.enum(["pro", "learner"]).optional(),
+});
+
+const createProjectBodySchema = api.projects.create.input.extend({
+  model: z.string().optional(),
 });
 
 function requireDevAdmin(req: any, res: any): boolean {
@@ -373,12 +357,27 @@ export async function registerRoutes(
     }
     if (!requireAuth(req, res)) return;
     try {
-      const input = api.projects.create.input.parse(req.body);
-      const { mode, reportAudience, ...projectData } = input;
+      const input = createProjectBodySchema.parse(req.body);
+      const { mode, reportAudience, model, ...projectData } = input;
       const project = await storage.createProject(
         { ...projectData, reportAudience: reportAudience ?? "pro" },
         mode || "github",
       );
+      const q = analyzerQueue();
+      if (q) {
+        const ingestInput = await ingestInputForStoredProject(project);
+        const audience = project.reportAudience === "learner" ? "learner" : "pro";
+        const payload: AnalyzerJobData = {
+          projectId: project.id,
+          ingestInput,
+          reportAudience: audience,
+          model,
+          userId: null,
+          creditCost: 0,
+        };
+        const job = await q.add("analyze", payload, { jobId: `${project.id}-${Date.now()}` });
+        return res.status(202).json({ projectId: project.id, jobId: String(job.id) });
+      }
       res.status(201).json(project);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -390,6 +389,44 @@ export async function registerRoutes(
       }
       res.status(500).json({ message: "Internal server error" });
     }
+  });
+
+  app.get("/api/jobs/:jobId", async (req: Request, res: Response) => {
+    if (!projectApiRateLimiter()) {
+      return res.status(429).json({ error: "Rate limit exceeded" });
+    }
+    if (!requireAuth(req, res)) return;
+    const q = analyzerQueue();
+    if (!q) {
+      return res.status(503).json({ message: "Job queue is not enabled" });
+    }
+    const job = await q.getJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+    const state = await job.getState();
+    const progressValRaw = job.progress;
+    const progress =
+      typeof progressValRaw === "number"
+        ? progressValRaw
+        : typeof progressValRaw === "object" &&
+            progressValRaw &&
+            "value" in progressValRaw &&
+            typeof (progressValRaw as { value?: unknown }).value === "number"
+          ? (progressValRaw as { value: number }).value
+          : 0;
+    const meta: Record<string, unknown> = {
+      status: state,
+      progress,
+      message: progressMessage(Number(progress) || 0),
+    };
+    if (state === "completed") {
+      meta.result = job.returnvalue;
+    }
+    if (state === "failed") {
+      meta.error = job.failedReason;
+    }
+    res.json(meta);
   });
 
   app.get(api.projects.get.path, async (req, res) => {
@@ -1190,6 +1227,10 @@ export async function registerRoutes(
     },
   );
 
+  mountBillingRoutes(app);
+  mountApiKeyRoutes(app);
+  app.use("/api/v1", apiV1Router);
+
   startWorkerLoop();
 
   return httpServer;
@@ -1314,362 +1355,11 @@ function createRateLimiter(maxRequests: number, windowMs: number) {
   };
 }
 
-async function runAnalysis(projectId: number, source: string, mode: string, sidecar?: IngestSidecar) {
-  if (sidecar) {
-    ingestSidecarByProject.set(projectId, sidecar);
-  }
-  const releaseIngestTemp = async () => {
-    const sc = ingestSidecarByProject.get(projectId);
-    ingestSidecarByProject.delete(projectId);
-    if (sc?.cleanup) {
-      await sc.cleanup().catch(() => {});
-    }
-  };
-
-  const startTime = Date.now();
-  const projectRow = await storage.getProject(projectId);
-  const reportAudience = projectRow?.reportAudience === "learner" ? "learner" : "pro";
-  console.log(`[Analyzer ${projectId}] Starting: mode=${mode} source=${source} audience=${reportAudience}`);
-  logEvent(projectId, "start", { mode, source, reportAudience });
-  await storage.updateProjectStatus(projectId, "analyzing");
-
-  const outputDir = path.resolve(process.cwd(), "out", String(projectId));
-  await fs.rm(outputDir, { recursive: true, force: true });
-  await fs.mkdir(outputDir, { recursive: true });
-
-  const analyzeTarget = source;
-
-  let finished = false;
-  const finishOnce = async (status: "completed" | "failed", reason?: string) => {
-    if (finished) return;
-    finished = true;
-    const durationMs = Date.now() - startTime;
-    const msg = `[Analyzer ${projectId}] Finalized: status=${status} duration=${durationMs}ms${reason ? ` reason=${reason}` : ""}`;
-    if (status === "failed") console.error(msg);
-    else console.log(msg);
-    logEvent(projectId, "finalize", { status, reason, durationMs });
-    await storage.updateProjectStatus(projectId, status);
-  };
-
-  let contentHashKey: string | undefined;
-  if (mode === "local") {
-    try {
-      contentHashKey = await computeContentHash(analyzeTarget);
-      const cached = await getCachedRun(contentHashKey);
-      if (cached) {
-        const ingestMeta = ingestSidecarByProject.get(projectId);
-        let learnerReport = cached.learnerReport;
-        if (ingestMeta?.inputType === "audio" && learnerReport) {
-          learnerReport = LEARNER_AUDIO_BANNER + learnerReport;
-        }
-        const analysis = await storage.createAnalysis({
-          projectId,
-          dossier: cached.dossier,
-          claims: cached.claims as any,
-          howto: cached.howto as any,
-          operate: cached.operate as any,
-          coverage: cached.coverage as any,
-          unknowns: (cached.unknowns as any) || [],
-          dependencyGraph: cached.dependencyGraph as Record<string, unknown> | null,
-          apiSurface: cached.apiSurface as Record<string, unknown> | null,
-          learnerReport,
-          inputType: ingestMeta?.inputType ?? null,
-        });
-        await storage.insertRun({
-          projectId,
-          mode: reportAudience,
-          inputType: ingestMeta?.inputType ?? "local",
-          dciScore: cached.dciScore,
-          claimCount: cached.claimCount,
-          verifiedCount: cached.verifiedCount,
-          openEndpointCount: cached.openEndpointCount,
-          criticalIssueCount: cached.criticalIssueCount,
-          dependencyCount: cached.dependencyCount,
-          flaggedDependencyCount: cached.flaggedDependencyCount,
-          runDir: cached.runDir,
-          receiptHash: cached.receiptHash,
-          modelUsed: process.env.DEBRIEF_ANALYZER_MODEL || undefined,
-          runMetadata: {
-            branch: ingestMeta?.branch,
-            commitHash: ingestMeta?.commitHash,
-            inputTypeDetail: ingestMeta?.inputTypeDetail,
-            analysisMode: ingestMeta?.analysisMode,
-            warnings: ingestMeta?.warnings,
-            cache_hit: true,
-            content_hash: contentHashKey,
-          },
-          analysisId: analysis.id,
-        });
-        logEvent(projectId, "cache_hit", { content_hash: contentHashKey });
-        await finishOnce("completed");
-        await releaseIngestTemp();
-        return;
-      }
-    } catch (err: any) {
-      logEvent(projectId, "cache_lookup_failed", { error: String(err?.message || err) });
-    }
-  }
-
-  const pythonBin = process.env.PYTHON_EXEC_PATH || "python3";
-  const pythonExists = pythonBin.startsWith("/")
-    ? existsSync(pythonBin)
-    : true; // bare command, trust PATH resolution
-
-  if (!pythonExists) {
-    logEvent(projectId, "fatal", { reason: "python_not_found", path: pythonBin });
-    await finishOnce("failed", "python_not_found");
-    await releaseIngestTemp();
-    return;
-  }
-
-  const args = ["-m", "server.analyzer.analyzer_cli", "analyze"];
-
-  if (mode === "replit") {
-    args.push("--replit");
-  } else {
-    args.push(analyzeTarget);
-  }
-
-  args.push("--output-dir", outputDir);
-  if (reportAudience === "learner") {
-    args.push("--mode", "learner");
-  }
-
-  const cmd = `${pythonBin} ${args.join(" ")}`;
-  console.log(`[Analyzer ${projectId}] Executing: ${cmd}`);
-  logEvent(projectId, "spawn", { cmd });
-
-  const pythonProcess = spawn(pythonBin, args, {
-    cwd: process.cwd(),
-    env: { ...process.env },
-  });
-
-  const timeout = setTimeout(() => {
-    if (finished) return;
-    console.error(`[Analyzer ${projectId}] Timeout after 10 minutes — killing`);
-    pythonProcess.kill("SIGKILL");
-    void finishOnce("failed", "timeout_10m");
-  }, Number(process.env.ANALYZER_TIMEOUT_MS) || 10 * 60 * 1000);
-
-  let stdout = "";
-  let stderr = "";
-
-  pythonProcess.stdout.on("data", (data) => {
-    stdout += data.toString();
-    console.log(`[Analyzer ${projectId}]: ${data}`);
-  });
-
-  pythonProcess.stderr.on("data", (data) => {
-    stderr += data.toString();
-    console.error(`[Analyzer ${projectId} ERR]: ${data}`);
-  });
-
-  pythonProcess.on("error", (err) => {
-    clearTimeout(timeout);
-    void releaseIngestTemp();
-    console.error(`[Analyzer ${projectId}] Spawn error:`, err);
-    logEvent(projectId, "spawn_error", { error: String(err) });
-    void finishOnce("failed", "spawn_error");
-  });
-
-  pythonProcess.on("close", async (code) => {
-    clearTimeout(timeout);
-    try {
-    if (finished) return;
-    logEvent(projectId, "exit", { code });
-    console.log(`[Analyzer ${projectId}] Exited code=${code}`);
-
-    if (code === 0) {
-      try {
-        const runDir = await getLatestAnalyzerRunDir(outputDir);
-        if (!runDir) {
-          logEvent(projectId, "missing_artifact", { artifact: "runs/<run-id>" });
-          await finishOnce("failed", "missing_run_dir");
-          return;
-        }
-
-        const ingestMeta = ingestSidecarByProject.get(projectId);
-
-        const requiredArtifacts = ["operate.json", "DOSSIER.md", "claims.json"];
-        for (const artifact of requiredArtifacts) {
-          if (!existsSync(path.join(runDir, artifact))) {
-            logEvent(projectId, "missing_artifact", { artifact, runDir });
-            await finishOnce("failed", `missing_artifact:${artifact}`);
-            return;
-          }
-        }
-
-        const dossierPath = path.join(runDir, "DOSSIER.md");
-        const claimsPath = path.join(runDir, "claims.json");
-        const howtoPath = path.join(runDir, "target_howto.json");
-        const operatePath = path.join(runDir, "operate.json");
-        const coveragePath = path.join(runDir, "coverage.json");
-
-        const dossier = await fs.readFile(dossierPath, "utf-8").catch(() => "");
-        
-        // Safe JSON parsing with error handling
-        let claims = {};
-        try {
-          const claimsContent = await fs.readFile(claimsPath, "utf-8").catch(() => "{}");
-          claims = JSON.parse(claimsContent);
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse claims.json:`, err);
-          logEvent(projectId, "parse_error", { file: "claims.json" });
-        }
-        
-        let howto: any = {};
-        try {
-          const howtoContent = await fs.readFile(howtoPath, "utf-8").catch(() => "{}");
-          howto = JSON.parse(howtoContent);
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse target_howto.json:`, err);
-          logEvent(projectId, "parse_error", { file: "target_howto.json" });
-        }
-        
-        let operate: any = null;
-        try {
-          const operateContent = await fs.readFile(operatePath, "utf-8");
-          operate = JSON.parse(operateContent);
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse operate.json:`, err);
-          logEvent(projectId, "parse_error", { file: "operate.json" });
-          operate = null;
-        }
-        
-        let coverage = {};
-        try {
-          const coverageContent = await fs.readFile(coveragePath, "utf-8").catch(() => "{}");
-          coverage = JSON.parse(coverageContent);
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse coverage.json:`, err);
-          logEvent(projectId, "parse_error", { file: "coverage.json" });
-        }
-
-        let dependencyGraph: unknown = null;
-        try {
-          const dgPath = path.join(runDir, "dependency_graph.json");
-          if (existsSync(dgPath)) {
-            dependencyGraph = JSON.parse(await fs.readFile(dgPath, "utf-8"));
-          }
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse dependency_graph.json:`, err);
-        }
-
-        let apiSurface: unknown = null;
-        try {
-          const apiPath = path.join(runDir, "api_surface.json");
-          if (existsSync(apiPath)) {
-            apiSurface = JSON.parse(await fs.readFile(apiPath, "utf-8"));
-          }
-        } catch (err) {
-          console.error(`[Analyzer ${projectId}] Failed to parse api_surface.json:`, err);
-        }
-
-        let learnerReport: string | null = null;
-        try {
-          const learnerPath = path.join(runDir, "LEARNER_REPORT.md");
-          if (existsSync(learnerPath)) {
-            learnerReport = await fs.readFile(learnerPath, "utf-8");
-          }
-        } catch {
-          learnerReport = null;
-        }
-
-        if (ingestMeta?.inputType === "audio" && learnerReport) {
-          learnerReport = LEARNER_AUDIO_BANNER + learnerReport;
-        }
-
-        const metrics = extractRunSummary(operate, claims, apiSurface, dependencyGraph);
-        let receiptHash: string | null = null;
-        const receiptPath = path.join(runDir, "receipt.json");
-        if (existsSync(receiptPath)) {
-          try {
-            const rh = await fs.readFile(receiptPath);
-            receiptHash = crypto.createHash("sha256").update(rh).digest("hex");
-          } catch {
-            receiptHash = null;
-          }
-        }
-
-        const analysis = await storage.createAnalysis({
-          projectId,
-          dossier,
-          claims,
-          howto,
-          operate,
-          coverage,
-          unknowns: howto.unknowns || [],
-          dependencyGraph: dependencyGraph as Record<string, unknown> | null,
-          apiSurface: apiSurface as Record<string, unknown> | null,
-          learnerReport,
-          inputType: ingestMeta?.inputType ?? null,
-        });
-
-        await storage.insertRun({
-          projectId,
-          mode: reportAudience,
-          inputType: ingestMeta?.inputType ?? mode,
-          dciScore: metrics.dciScore ?? undefined,
-          claimCount: metrics.claimCount ?? undefined,
-          verifiedCount: metrics.verifiedCount ?? undefined,
-          openEndpointCount: metrics.openEndpointCount ?? undefined,
-          criticalIssueCount: metrics.criticalIssueCount ?? undefined,
-          dependencyCount: metrics.dependencyCount ?? undefined,
-          flaggedDependencyCount: metrics.flaggedDependencyCount ?? undefined,
-          runDir,
-          receiptHash,
-          modelUsed: process.env.DEBRIEF_ANALYZER_MODEL || undefined,
-          runMetadata: {
-            branch: ingestMeta?.branch,
-            commitHash: ingestMeta?.commitHash,
-            inputTypeDetail: ingestMeta?.inputTypeDetail,
-            analysisMode: ingestMeta?.analysisMode,
-            warnings: ingestMeta?.warnings,
-            cache_hit: false,
-            content_hash: contentHashKey,
-          },
-          analysisId: analysis.id,
-        });
-
-        if (contentHashKey) {
-          try {
-            await setCachedRun(
-              contentHashKey,
-              buildCachedRunFromArtifacts({
-                insertPayload: {
-                  dossier,
-                  claims,
-                  howto,
-                  operate,
-                  coverage,
-                  unknowns: howto.unknowns || [],
-                  dependencyGraph: dependencyGraph as Record<string, unknown> | null,
-                  apiSurface: apiSurface as Record<string, unknown> | null,
-                  learnerReport,
-                  inputType: ingestMeta?.inputType ?? null,
-                },
-                receiptHash,
-                runDir,
-                metrics,
-              }),
-            );
-          } catch (err: any) {
-            logEvent(projectId, "cache_set_failed", { error: String(err?.message || err) });
-          }
-        }
-
-        await finishOnce("completed");
-      } catch (err) {
-        console.error(`[Analyzer ${projectId}] Error saving results:`, err);
-        logEvent(projectId, "save_error", { error: String(err) });
-        await finishOnce("failed", "save_error");
-      }
-    } else {
-      logEvent(projectId, "nonzero_exit", { code, stderr: stderr.slice(-500) });
-      await finishOnce("failed", `exit_code_${code}`);
-    }
-    } finally {
-      await releaseIngestTemp();
-    }
-  });
+function runAnalysis(projectId: number, source: string, mode: string, sidecar?: IngestSidecar) {
+  void runProjectAnalysis({
+    projectId,
+    source,
+    mode,
+    ingestMeta: sidecar,
+  }).catch((err) => console.error(`[Analyzer ${projectId}]`, err));
 }

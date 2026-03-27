@@ -6,10 +6,17 @@ import Redis from "ioredis";
 
 let _queue: Queue | null = null;
 
-const redisConnectionOptions = {
+export const redisConnectionOptions = {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 } as const;
+
+/** New ioredis instance per BullMQ component (Queue vs Worker). */
+export function createRedisConnection(): Redis | null {
+  const url = process.env.REDIS_URL;
+  if (!url || process.env.DEBRIEF_USE_BULLMQ !== "1") return null;
+  return new Redis(url, { ...redisConnectionOptions });
+}
 
 const defaultJobOptions = {
   attempts: 3,
@@ -19,15 +26,13 @@ const defaultJobOptions = {
 };
 
 export function analyzerQueue(): Queue | null {
-  const url = process.env.REDIS_URL;
-  if (!url || process.env.DEBRIEF_USE_BULLMQ !== "1") return null;
-  if (!_queue) {
-    const connection = new Redis(url, { ...redisConnectionOptions });
-    _queue = new Queue("debrief-analyzer", {
-      connection,
-      defaultJobOptions,
-    });
-  }
+  if (_queue) return _queue;
+  const connection = createRedisConnection();
+  if (!connection) return null;
+  _queue = new Queue("debrief-analyzer", {
+    connection,
+    defaultJobOptions,
+  });
   return _queue;
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ProgressPanel } from "@/components/ProgressPanel";
 import { useLocation } from "wouter";
 import { useCreateProject, triggerProjectAnalysis, cloneAnalyzeProject } from "@/hooks/use-projects";
 import { Layout } from "@/components/layout";
@@ -45,6 +46,19 @@ export default function Home() {
   const [recording, setRecording] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const [queuedJob, setQueuedJob] = useState<{
+    projectId: number;
+    jobId: string;
+    label: string;
+  } | null>(null);
+
+  const goToProject = useCallback(
+    (id: number) => {
+      setQueuedJob(null);
+      setLocation(`/projects/${id}`);
+    },
+    [setLocation],
+  );
 
   const cloneMatch = useMemo(() => matchCloneAnalyzeUrl(repoUrl), [repoUrl]);
 
@@ -255,15 +269,19 @@ export default function Home() {
 
     setSubmitting(true);
     try {
-      const project = await createProject.mutateAsync({
+      const out = await createProject.mutateAsync({
         url: normalizedUrl,
         name,
         mode: "github",
         reportAudience,
         apiKey: key,
       });
-      await triggerProjectAnalysis(project.id, key);
-      setLocation(`/projects/${project.id}`);
+      if (out.kind === "queued") {
+        setQueuedJob({ projectId: out.projectId, jobId: out.jobId, label: name });
+        return;
+      }
+      await triggerProjectAnalysis(out.project.id, key);
+      goToProject(out.project.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setInlineError(message);
@@ -307,6 +325,14 @@ export default function Home() {
           )}
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+            {queuedJob && (
+              <ProgressPanel
+                jobId={queuedJob.jobId}
+                projectId={queuedJob.projectId}
+                projectLabel={queuedJob.label}
+                onDone={() => goToProject(queuedJob.projectId)}
+              />
+            )}
             <div>
               <p className="text-slate-800 text-sm font-medium mb-2">Report style</p>
               <div

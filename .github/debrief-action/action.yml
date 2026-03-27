@@ -1,0 +1,23 @@
+name: 'Debrief Analysis'
+description: 'Analyze your codebase with Debrief on every push'
+author: 'Debrief'
+inputs:
+  api-key:
+    description: 'Your Debrief API key (generate at app.debrief.app/settings/keys)'
+    required: true
+  mode:
+    description: 'Report mode: learner or pro'
+    default: 'learner'
+  fail-on-critical:
+    description: 'Fail the workflow if critical issues are found'
+    default: 'false'
+outputs:
+  report-url:
+    description: 'URL to the full Debrief report'
+  dci-score:
+    description: 'Data Confidence Index score (0-1)'
+  critical-issues:
+    description: 'Number of critical issues found'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

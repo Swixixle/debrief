@@ -133,22 +133,37 @@ type CreateProjectInput = {
   /** Server accepts github | local | replit — use `github` for public GitHub repos */
   mode?: "github" | "local" | "replit";
   reportAudience?: "pro" | "learner";
+  model?: string;
   apiKey: string;
 };
 
-// POST /api/projects (caller must trigger analyze separately with the same API key)
+export type CreateProjectResult =
+  | { kind: "queued"; projectId: number; jobId: string }
+  | { kind: "created"; project: Project };
+
+// POST /api/projects — when BullMQ is enabled, server returns 202 + jobId; otherwise 201 + project.
 export function useCreateProject() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (input: CreateProjectInput) => {
-      const { apiKey, mode = "github", reportAudience = "pro", url, name } = input;
+    mutationFn: async (input: CreateProjectInput): Promise<CreateProjectResult> => {
+      const { apiKey, mode = "github", reportAudience = "pro", url, name, model } = input;
       const res = await fetch(api.projects.create.path, {
         method: api.projects.create.method,
         headers: { "Content-Type": "application/json", ...authHeaders(apiKey) },
-        body: JSON.stringify({ url, name, mode, reportAudience }),
+        body: JSON.stringify({ url, name, mode, reportAudience, model }),
       });
+
+      if (res.status === 202) {
+        const body = (await res.json()) as { projectId?: unknown; jobId?: unknown };
+        const projectId = Number(body.projectId);
+        const jobId = typeof body.jobId === "string" ? body.jobId : String(body.jobId ?? "");
+        if (!Number.isFinite(projectId) || !jobId) {
+          throw new Error("Invalid async create response");
+        }
+        return { kind: "queued", projectId, jobId };
+      }
 
       if (!res.ok) {
         if (res.status === 400) {
@@ -158,13 +173,15 @@ export function useCreateProject() {
         if (res.status === 401) throw new Error("Invalid API key");
         throw new Error("Failed to create project");
       }
-      return api.projects.create.responses[201].parse(await res.json());
+      const project = api.projects.create.responses[201].parse(await res.json());
+      return { kind: "created", project };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: [api.projects.list.path] });
       toast({
-        title: "Project created",
-        description: "Starting analysis…",
+        title: data.kind === "queued" ? "Analysis queued" : "Project created",
+        description:
+          data.kind === "queued" ? "Live progress below — you can leave this page open." : "Starting analysis…",
       });
     },
     onError: (error: Error) => {

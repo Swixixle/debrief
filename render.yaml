@@ -7,7 +7,7 @@ services:
   - type: web
     name: debrief-api
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: pip install -e . --break-system-packages && npm install && npm run build
     startCommand: node dist/index.cjs
     envVars:
       - key: NODE_ENV
@@ -30,7 +30,7 @@ services:
   - type: worker
     name: debrief-worker
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: pip install -e . --break-system-packages && npm install && npm run build
     startCommand: node dist/worker.cjs
     envVars:
       - key: NODE_ENV

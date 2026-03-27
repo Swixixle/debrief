@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProjectRuns } from "@/hooks/use-projects";
+import { HistoryAuthNudge } from "@/components/HistoryAuthNudge";
 import { useLocation } from "wouter";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -67,6 +68,8 @@ function RunHistoryPanel({
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6 mb-6 space-y-4">
       <h3 className="text-lg font-semibold text-slate-900">History</h3>
+
+      <HistoryAuthNudge show={runs.length >= 2} />
 
       {reportAudience === "learner" && runs.length >= 2 ? (
         <div className="rounded-lg bg-emerald-50 border border-emerald-200/80 px-4 py-3 text-sm text-emerald-950 space-y-1">

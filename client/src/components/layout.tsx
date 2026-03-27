@@ -2,6 +2,8 @@ import { Link, useLocation } from "wouter";
 import { Terminal, Github } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEffect } from "react";
+import { CreditBadge } from "@/components/CreditBadge";
+import { ClerkNav } from "@/components/ClerkNav";
 
 export function Layout({
   children,
@@ -72,6 +74,13 @@ export function Layout({
             <NavLink href="/ci" active={location.startsWith("/ci")} isLight={isLight}>
               CI Feed
             </NavLink>
+            <NavLink href="/billing" active={location.startsWith("/billing")} isLight={isLight}>
+              Billing
+            </NavLink>
+            <div className={cn("hidden sm:flex items-center", isLight ? "text-slate-600" : "text-muted-foreground")}>
+              <CreditBadge isLight={isLight} />
+            </div>
+            <ClerkNav isLight={isLight} />
             <div className={cn("w-px h-6 mx-2", isLight ? "bg-slate-200" : "bg-border")} />
             <a
               href="https://github.com"
