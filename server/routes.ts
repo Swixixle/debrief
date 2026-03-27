@@ -171,6 +171,11 @@ function requireDevAdmin(req: any, res: any): boolean {
 
 // Middleware to require authentication for API endpoints
 function requireAuth(req: any, res: any): boolean {
+  /** Public web UI: skip shared-secret check (still rate-limited). Set only for controlled deploys. */
+  if (process.env.DEBRIEF_OPEN_WEB === "1") {
+    return true;
+  }
+
   const apiKey = process.env.API_KEY;
   
   // If API_KEY is not set in production, require it

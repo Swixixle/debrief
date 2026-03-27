@@ -4,6 +4,7 @@ import { api, buildUrl } from "@shared/routes";
 import { type Project, type Analysis } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useDebriefApiKey } from "@/contexts/DebriefApiKeyContext";
+import { isOpenWeb } from "@/lib/openWeb";
 
 function authHeaders(apiKey: string): HeadersInit {
   const h: Record<string, string> = {};
@@ -20,10 +21,10 @@ export function useAnalysisStatus(projectId: number) {
     startRef.current = Date.now();
   }, [projectId]);
 
-  const enabled = Number.isFinite(projectId) && projectId > 0 && !!apiKey;
+  const enabled = Number.isFinite(projectId) && projectId > 0 && (!!apiKey || isOpenWeb);
 
   return useQuery({
-    queryKey: ["analysisStatus", projectId, apiKey],
+    queryKey: ["analysisStatus", projectId, apiKey, isOpenWeb],
     enabled,
     queryFn: async (): Promise<{ project: Project; analysis: Analysis | null }> => {
       const hdr = authHeaders(apiKey);
@@ -75,8 +76,8 @@ export function useAnalysisStatus(projectId: number) {
 export function useProjects() {
   const { apiKey } = useDebriefApiKey();
   return useQuery({
-    queryKey: [api.projects.list.path, apiKey],
-    enabled: !!apiKey,
+    queryKey: [api.projects.list.path, apiKey, isOpenWeb],
+    enabled: !!apiKey || isOpenWeb,
     queryFn: async () => {
       const res = await fetch(api.projects.list.path, { headers: authHeaders(apiKey) });
       if (res.status === 401) throw new Error("Invalid API key");
@@ -90,8 +91,8 @@ export function useProjects() {
 export function useProject(id: number) {
   const { apiKey } = useDebriefApiKey();
   return useQuery({
-    queryKey: [api.projects.get.path, id, apiKey],
-    enabled: !!id && id > 0 && !!apiKey,
+    queryKey: [api.projects.get.path, id, apiKey, isOpenWeb],
+    enabled: !!id && id > 0 && (!!apiKey || isOpenWeb),
     queryFn: async () => {
       const url = buildUrl(api.projects.get.path, { id });
       const res = await fetch(url, { headers: authHeaders(apiKey) });
@@ -114,8 +115,8 @@ export function useProject(id: number) {
 export function useAnalysis(projectId: number) {
   const { apiKey } = useDebriefApiKey();
   return useQuery({
-    queryKey: [api.projects.getAnalysis.path, projectId, apiKey],
-    enabled: !!projectId && projectId > 0 && !!apiKey,
+    queryKey: [api.projects.getAnalysis.path, projectId, apiKey, isOpenWeb],
+    enabled: !!projectId && projectId > 0 && (!!apiKey || isOpenWeb),
     queryFn: async () => {
       const url = buildUrl(api.projects.getAnalysis.path, { id: projectId });
       const res = await fetch(url, { headers: authHeaders(apiKey) });
@@ -148,7 +149,7 @@ export function useCreateProject() {
 
   return useMutation({
     mutationFn: async (input: CreateProjectInput): Promise<CreateProjectResult> => {
-      const { apiKey, mode = "github", reportAudience = "pro", url, name, model } = input;
+      const { apiKey, mode = "github", reportAudience = "learner", url, name, model } = input;
       const res = await fetch(api.projects.create.path, {
         method: api.projects.create.method,
         headers: { "Content-Type": "application/json", ...authHeaders(apiKey) },
@@ -274,8 +275,8 @@ export type ProjectRunListRow = {
 export function useProjectRuns(projectId: number) {
   const { apiKey } = useDebriefApiKey();
   return useQuery({
-    queryKey: ["projectRuns", projectId, apiKey],
-    enabled: Number.isFinite(projectId) && projectId > 0 && !!apiKey,
+    queryKey: ["projectRuns", projectId, apiKey, isOpenWeb],
+    enabled: Number.isFinite(projectId) && projectId > 0 && (!!apiKey || isOpenWeb),
     queryFn: async (): Promise<ProjectRunListRow[]> => {
       const res = await fetch(`/api/projects/${projectId}/runs`, { headers: authHeaders(apiKey) });
       if (res.status === 401) throw new Error("Invalid API key");
@@ -288,8 +289,9 @@ export function useProjectRuns(projectId: number) {
 export function useProjectRunDetail(projectId: number, runId: number | null) {
   const { apiKey } = useDebriefApiKey();
   return useQuery({
-    queryKey: ["projectRunDetail", projectId, runId, apiKey],
-    enabled: Number.isFinite(projectId) && projectId > 0 && !!runId && !!apiKey,
+    queryKey: ["projectRunDetail", projectId, runId, apiKey, isOpenWeb],
+    enabled:
+      Number.isFinite(projectId) && projectId > 0 && !!runId && (!!apiKey || isOpenWeb),
     queryFn: async (): Promise<{ run: Record<string, unknown>; analysis: Analysis | null }> => {
       const res = await fetch(`/api/projects/${projectId}/runs/${runId}`, { headers: authHeaders(apiKey) });
       if (res.status === 401) throw new Error("Invalid API key");

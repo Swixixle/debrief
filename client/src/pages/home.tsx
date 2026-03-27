@@ -6,9 +6,29 @@ import { Layout } from "@/components/layout";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Loader2, Mic, Upload } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Loader2, ChevronDown, Mic, Sparkles, Upload } from "lucide-react";
 import { useDebriefApiKey } from "@/contexts/DebriefApiKeyContext";
 import { matchCloneAnalyzeUrl } from "@shared/cloneAnalyzeUrl";
+import { isOpenWeb } from "@/lib/openWeb";
+
+const EXAMPLE_REPOS = [
+  { label: "FastAPI", url: "https://github.com/fastapi/fastapi" },
+  { label: "Express", url: "https://github.com/expressjs/express" },
+  { label: "SQLModel", url: "https://github.com/tiangolo/sqlmodel" },
+] as const;
+
+const LEARNER_VALUE_PROPS = [
+  "Start with a question, not a dashboard.",
+  "Drop a repo, zip, or voice note — we'll meet you there.",
+  "One next move when you're ready — not a wall of options.",
+] as const;
+
+const PRO_VALUE_PROPS = [
+  "30 minutes. Not 30 days.",
+  "Evidence at file:line — VERIFIED / INFERRED / UNKNOWN.",
+  "Signed receipts — not opinions.",
+] as const;
 
 function validateRepoUrl(url: string): string | null {
   const t = url.trim();
@@ -41,7 +61,7 @@ export default function Home() {
   const createProject = useCreateProject();
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [reportAudience, setReportAudience] = useState<"pro" | "learner">("pro");
+  const [reportAudience, setReportAudience] = useState<"pro" | "learner">("learner");
   const [ingestHint, setIngestHint] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
@@ -51,6 +71,9 @@ export default function Home() {
     jobId: string;
     label: string;
   } | null>(null);
+  const [keySectionOpen, setKeySectionOpen] = useState(() => !isOpenWeb);
+
+  const needsUserApiKey = !isOpenWeb;
 
   const goToProject = useCallback(
     (id: number) => {
@@ -63,16 +86,24 @@ export default function Home() {
   const cloneMatch = useMemo(() => matchCloneAnalyzeUrl(repoUrl), [repoUrl]);
 
   const syncKeyToContext = () => {
-    setApiKey(apiKeyInput);
+    if (apiKeyInput.trim()) setApiKey(apiKeyInput);
   };
+
+  const assertApiAccess = useCallback((): boolean => {
+    if (!needsUserApiKey) return true;
+    if (!apiKeyInput.trim()) {
+      setInlineError("Add your API key below (or open the Advanced section).");
+      setKeySectionOpen(true);
+      return false;
+    }
+    return true;
+  }, [apiKeyInput, needsUserApiKey]);
+
+  const effectiveKey = needsUserApiKey ? apiKeyInput.trim() : "";
 
   const postIngestAnalyze = useCallback(
     async (ingest: Record<string, string>, displayHint: string) => {
-      const key = apiKeyInput.trim();
-      if (!key) {
-        setInlineError("An API key is required. Contact us to get access.");
-        return;
-      }
+      if (!assertApiAccess()) return;
       syncKeyToContext();
       setSubmitting(true);
       setIngestHint(displayHint);
@@ -80,7 +111,7 @@ export default function Home() {
       try {
         const res = await fetch("/api/ingest/analyze", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "X-Api-Key": key },
+          headers: { "Content-Type": "application/json", ...(effectiveKey ? { "X-Api-Key": effectiveKey } : {}) },
           body: JSON.stringify({
             ingest,
             name: label.trim() || "Debrief import",
@@ -102,16 +133,12 @@ export default function Home() {
         setIngestHint(null);
       }
     },
-    [apiKeyInput, label, reportAudience, setApiKey, setLocation],
+    [assertApiAccess, effectiveKey, label, reportAudience, setLocation],
   );
 
   const uploadBlobAnalyze = useCallback(
     async (blob: Blob, kind: "zip" | "audio", hint: string) => {
-      const key = apiKeyInput.trim();
-      if (!key) {
-        setInlineError("An API key is required. Contact us to get access.");
-        return;
-      }
+      if (!assertApiAccess()) return;
       syncKeyToContext();
       setSubmitting(true);
       setIngestHint(hint);
@@ -123,9 +150,11 @@ export default function Home() {
         fd.append("kind", kind);
         fd.append("name", label.trim() || (kind === "audio" ? "Voice note" : "Archive"));
         fd.append("reportAudience", reportAudience);
+        const headers: HeadersInit = {};
+        if (effectiveKey) headers["X-Api-Key"] = effectiveKey;
         const res = await fetch("/api/ingest/analyze-upload", {
           method: "POST",
-          headers: { "X-Api-Key": key },
+          headers,
           body: fd,
         });
         if (res.status === 401) throw new Error("Invalid API key");
@@ -142,7 +171,7 @@ export default function Home() {
         setIngestHint(null);
       }
     },
-    [apiKeyInput, label, reportAudience, setApiKey, setLocation],
+    [assertApiAccess, effectiveKey, label, reportAudience, setLocation],
   );
 
   const handleDataTransferFiles = useCallback(
@@ -176,11 +205,7 @@ export default function Home() {
       setRecording(false);
       return;
     }
-    const key = apiKeyInput.trim();
-    if (!key) {
-      setInlineError("An API key is required.");
-      return;
-    }
+    if (!assertApiAccess()) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
@@ -210,7 +235,7 @@ export default function Home() {
       if (!t || !/^https?:\/\//i.test(t)) return;
       ev.preventDefault();
       setRepoUrl(t);
-      setIngestHint("🔗 URL pasted — choose Run Debrief or a specialized import.");
+      setIngestHint("🔗 URL pasted — run Debrief or drop a file.");
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -219,11 +244,7 @@ export default function Home() {
   const handleCloneAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setInlineError(null);
-    const key = apiKeyInput.trim();
-    if (!key) {
-      setInlineError("An API key is required. Contact us to get access.");
-      return;
-    }
+    if (!assertApiAccess()) return;
     if (!cloneMatch) {
       setInlineError("Enter a Replit repl URL (https://replit.com/@username/repl).");
       return;
@@ -236,7 +257,7 @@ export default function Home() {
       const project = await cloneAnalyzeProject({
         gitUrl: cloneMatch.cloneUrl,
         name,
-        apiKey: key,
+        apiKey: effectiveKey,
       });
       setLocation(`/projects/${project.id}`);
     } catch (err) {
@@ -253,11 +274,7 @@ export default function Home() {
       return handleCloneAnalyze(e);
     }
     setInlineError(null);
-    const key = apiKeyInput.trim();
-    if (!key) {
-      setInlineError("An API key is required. Contact us to get access.");
-      return;
-    }
+    if (!assertApiAccess()) return;
     syncKeyToContext();
     const name = label.trim() || repoUrl.trim().split("/").filter(Boolean).pop() || "Repository";
     const urlErr = validateRepoUrl(repoUrl);
@@ -274,13 +291,13 @@ export default function Home() {
         name,
         mode: "github",
         reportAudience,
-        apiKey: key,
+        apiKey: effectiveKey,
       });
       if (out.kind === "queued") {
         setQueuedJob({ projectId: out.projectId, jobId: out.jobId, label: name });
         return;
       }
-      await triggerProjectAnalysis(out.project.id, key);
+      await triggerProjectAnalysis(out.project.id, effectiveKey);
       goToProject(out.project.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
@@ -290,41 +307,48 @@ export default function Home() {
     }
   };
 
-  return (
-    <Layout variant="light">
-      <div className="max-w-3xl mx-auto text-center px-4">
-        <h1 className="text-4xl md:text-5xl font-semibold tracking-tight text-slate-900 leading-tight">
-          Know exactly what you&apos;re working with.
-        </h1>
-        <p className="mt-6 text-lg md:text-xl text-slate-600 leading-relaxed max-w-2xl mx-auto">
-          Debrief analyzes any codebase and produces a signed, evidence-anchored brief you can act on.
-        </p>
+  const valueProps = reportAudience === "learner" ? LEARNER_VALUE_PROPS : PRO_VALUE_PROPS;
 
-        <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-8 text-left">
-          <ValueProp text="30 minutes. Not 30 days." />
-          <ValueProp text="Plain language. Not developer jargon." />
-          <ValueProp text={'Signed evidence. Not someone\'s opinion.'} />
+  return (
+    <Layout>
+      <div
+        className="max-w-3xl mx-auto text-center px-4 pb-16"
+        data-audience={reportAudience}
+      >
+        <div className="flex flex-col items-center gap-3 mb-6">
+          {!submitting && !recording && (
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/35 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest text-primary">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-40" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+              </span>
+              Debrief — Ready
+            </div>
+          )}
         </div>
 
-        <div className="mt-16 rounded-2xl border border-slate-200 bg-slate-50/80 p-8 md:p-10 text-left shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-4">Settings</p>
-          <Label htmlFor="api-key" className="text-slate-800 text-sm font-medium">
-            Enter your API key to get started
-          </Label>
-          <Input
-            id="api-key"
-            type="password"
-            autoComplete="off"
-            value={apiKeyInput}
-            onChange={(e) => setApiKeyInput(e.target.value)}
-            className="mt-2 h-11 bg-white border-slate-300 text-slate-900"
-            placeholder="Your API key"
-          />
-          {!apiKeyInput.trim() && (
-            <p className="mt-2 text-sm text-slate-600">An API key is required. Contact us to get access.</p>
-          )}
+        <h1 className="text-4xl md:text-5xl font-display font-bold tracking-tight text-foreground leading-tight">
+          {reportAudience === "learner" ? "What did you build?" : "Know exactly what you're shipping."}
+        </h1>
+        <p className="mt-5 text-lg md:text-xl text-muted-foreground leading-relaxed max-w-2xl mx-auto">
+          {reportAudience === "learner"
+            ? "Debrief reads your project and tells you, in plain language, what's working — and your one clear next step."
+            : "Debrief analyzes any codebase and produces a signed, evidence-anchored brief you can act on."}
+        </p>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+          {valueProps.map((text) => (
+            <ValueProp key={text} text={text} />
+          ))}
+        </div>
+
+        <div className="mt-14 rounded-2xl border border-border bg-card/80 p-8 md:p-10 text-left shadow-lg backdrop-blur-sm">
+          <div className="flex items-center gap-2 text-primary mb-6">
+            <Sparkles className="w-5 h-5 shrink-0" aria-hidden />
+            <p className="text-xs font-semibold uppercase tracking-wider">Run a debrief</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-8">
             {queuedJob && (
               <ProgressPanel
                 jobId={queuedJob.jobId}
@@ -333,42 +357,69 @@ export default function Home() {
                 onDone={() => goToProject(queuedJob.projectId)}
               />
             )}
+
             <div>
-              <p className="text-slate-800 text-sm font-medium mb-2">Report style</p>
+              <p className="text-foreground text-sm font-medium mb-2">Report style</p>
               <div
-                className="flex rounded-lg border border-slate-300 bg-white p-1 max-w-md"
+                className="flex rounded-lg border border-border bg-background/60 p-1 max-w-md"
                 role="group"
                 aria-label="Report style"
               >
                 <button
                   type="button"
-                  onClick={() => setReportAudience("pro")}
-                  className={`flex-1 rounded-md py-2 px-3 text-sm font-medium transition-colors ${
-                    reportAudience === "pro"
-                      ? "bg-slate-900 text-white shadow"
-                      : "text-slate-700 hover:bg-slate-50"
+                  onClick={() => setReportAudience("learner")}
+                  className={`flex-1 rounded-md py-2.5 px-3 text-sm font-medium transition-colors ${
+                    reportAudience === "learner"
+                      ? "bg-primary text-primary-foreground shadow"
+                      : "text-muted-foreground hover:bg-muted/60"
                   }`}
                 >
-                  Pro Report
+                  Learner
                 </button>
                 <button
                   type="button"
-                  onClick={() => setReportAudience("learner")}
-                  className={`flex-1 rounded-md py-2 px-3 text-sm font-medium transition-colors ${
-                    reportAudience === "learner"
-                      ? "bg-amber-700 text-white shadow"
-                      : "text-slate-700 hover:bg-amber-50/80"
+                  onClick={() => setReportAudience("pro")}
+                  className={`flex-1 rounded-md py-2.5 px-3 text-sm font-medium transition-colors ${
+                    reportAudience === "pro"
+                      ? "bg-primary text-primary-foreground shadow"
+                      : "text-muted-foreground hover:bg-muted/60"
                   }`}
                 >
-                  Learner Report
+                  Pro
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-600">
-                Learner adds a plain-language coach file alongside the full technical outputs.
+              <p className="mt-2 text-xs text-muted-foreground">
+                {reportAudience === "learner"
+                  ? "Warm, jargon-light coach output — best for your first runs."
+                  : "Full dossier, claims, and verified receipts for teams & diligence."}
               </p>
             </div>
+
+            {/* Voice — prominent */}
+            <div className="rounded-xl border-2 border-primary/40 bg-primary/5 px-5 py-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="text-left">
+                  <p className="font-display font-semibold text-foreground text-lg">Talk through what you made</p>
+                  <p className="mt-1 text-sm text-muted-foreground max-w-md">
+                    Record a short voice note — we transcribe and analyze it like any other input.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="lg"
+                  variant={recording ? "destructive" : "default"}
+                  className={`shrink-0 h-12 px-6 font-semibold ${!recording ? "bg-primary text-primary-foreground hover:opacity-90" : ""}`}
+                  onClick={() => void toggleMic()}
+                  disabled={submitting}
+                >
+                  <Mic className="w-5 h-5 mr-2" aria-hidden />
+                  {recording ? "Stop & analyze" : "Record voice"}
+                </Button>
+              </div>
+            </div>
+
             <div
-              className="rounded-xl border-2 border-dashed border-slate-300 bg-white/60 px-4 py-6 text-center text-sm text-slate-600"
+              className="rounded-xl border-2 border-dashed border-border bg-background/40 px-4 py-8 text-center text-sm text-muted-foreground"
               onDragOver={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -379,29 +430,16 @@ export default function Home() {
                 void handleDataTransferFiles(e.dataTransfer.files);
               }}
             >
-              <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2" aria-hidden />
-              <p className="font-medium text-slate-800">Drop files here</p>
-              <p className="mt-1 text-xs">
-                .zip · audio (.mp3, .m4a, .wav, .webm) · README (.md / .txt). Full folders: use the Debrief desktop app
-                (Tauri) or zip the project first.
+              <Upload className="w-10 h-10 mx-auto text-primary/80 mb-3" aria-hidden />
+              <p className="font-medium text-foreground text-base">Drop files here</p>
+              <p className="mt-1 text-xs max-w-lg mx-auto">
+                .zip · audio (.mp3, .m4a, .wav, .webm) · README (.md / .txt). Full folders: zip the project or use the
+                desktop app.
               </p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="border-slate-300"
-                  onClick={() => void toggleMic()}
-                  disabled={submitting}
-                >
-                  <Mic className="w-4 h-4 mr-2" aria-hidden />
-                  {recording ? "Stop & analyze" : "Record voice"}
-                </Button>
-              </div>
             </div>
 
             <div>
-              <Label htmlFor="repo-url" className="text-slate-800 text-sm font-medium">
+              <Label htmlFor="repo-url" className="text-foreground text-sm font-medium">
                 Repository URL
               </Label>
               <Input
@@ -410,33 +448,85 @@ export default function Home() {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 placeholder="https://github.com/username/repo or https://replit.com/@user/repl"
-                className="mt-2 h-12 text-base bg-white border-slate-300 text-slate-900"
+                className="mt-2 h-12 text-base bg-background border-border"
               />
+              <div className="mt-3 flex flex-wrap gap-2 justify-start">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground w-full sm:w-auto sm:mr-1">
+                  Try an example
+                </span>
+                {EXAMPLE_REPOS.map((ex) => (
+                  <button
+                    key={ex.url}
+                    type="button"
+                    className="rounded-full border border-border bg-background/80 px-3 py-1 text-xs font-medium text-foreground hover:border-primary/50 hover:bg-primary/10 transition-colors"
+                    onClick={() => {
+                      setRepoUrl(ex.url);
+                      setInlineError(null);
+                    }}
+                  >
+                    {ex.label}
+                  </button>
+                ))}
+              </div>
               {cloneMatch && (
-                <p className="mt-2 text-sm text-slate-600">
-                  Replit repl detected — use <strong>Clone &amp; Analyze</strong> to clone via git and run the analyzer on the checkout.
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Replit repl detected — use <strong className="text-foreground">Run Debrief</strong> to clone via git and
+                  analyze the checkout.
                 </p>
               )}
             </div>
+
             <div>
-              <Label htmlFor="repo-label" className="text-slate-800 text-sm font-medium">
-                Name / label
+              <Label htmlFor="repo-label" className="text-foreground text-sm font-medium">
+                Name / label <span className="text-muted-foreground font-normal">(optional)</span>
               </Label>
               <Input
                 id="repo-label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="My project"
-                className="mt-2 h-12 text-base bg-white border-slate-300 text-slate-900"
+                className="mt-2 h-12 text-base bg-background border-border"
               />
             </div>
 
+            {needsUserApiKey && (
+              <Collapsible open={keySectionOpen} onOpenChange={setKeySectionOpen}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-muted/30"
+                  >
+                    API key <span className="text-muted-foreground font-normal">(required for this deployment)</span>
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 transition-transform ${keySectionOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-3 space-y-2">
+                  <Input
+                    id="api-key"
+                    type="password"
+                    autoComplete="off"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    className="h-11 bg-background border-border"
+                    placeholder="Your API key"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    When this server runs in open mode, no key is needed on the public home page.
+                  </p>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+
             {ingestHint && (
-              <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{ingestHint}</p>
+              <p className="text-sm text-primary-foreground bg-primary/20 border border-primary/30 rounded-lg px-3 py-2">
+                {ingestHint}
+              </p>
             )}
 
             {inlineError && (
-              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2" role="alert">
+              <p className="text-sm text-destructive-foreground bg-destructive/15 border border-destructive/30 rounded-lg px-3 py-2" role="alert">
                 {inlineError}
               </p>
             )}
@@ -445,15 +535,15 @@ export default function Home() {
               type="submit"
               data-testid={cloneMatch ? "button-clone-analyze" : "button-run-debrief"}
               disabled={submitting || (!cloneMatch && createProject.isPending)}
-              className="w-full h-12 text-base font-semibold bg-slate-900 text-white hover:bg-slate-800"
+              className="w-full h-12 text-base font-semibold bg-primary text-primary-foreground hover:opacity-90 gap-2"
             >
               {submitting ? (
                 <span className="flex items-center justify-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  {cloneMatch ? "Cloning and analyzing…" : "Running Debrief on your repo…"}
+                  {cloneMatch ? "Cloning and analyzing…" : "Running Debrief…"}
                 </span>
               ) : cloneMatch ? (
-                "Clone & Analyze"
+                "Clone & analyze"
               ) : (
                 "Run Debrief"
               )}
@@ -461,8 +551,9 @@ export default function Home() {
           </form>
         </div>
 
-        <p className="mt-8 text-sm text-slate-500">
-          Supports public GitHub repositories and Replit repls (git clone on the server).
+        <p className="mt-8 text-sm text-muted-foreground">
+          Public GitHub repos and Replit repls (server-side git clone). Open web mode:{" "}
+          {isOpenWeb ? "on — jump in with no API key." : "off — add a key under Advanced."}
         </p>
       </div>
     </Layout>
@@ -471,7 +562,7 @@ export default function Home() {
 
 function ValueProp({ text }: { text: string }) {
   return (
-    <p className="text-base md:text-lg font-medium text-slate-800 leading-snug border-l-4 border-slate-300 pl-4">
+    <p className="text-base md:text-lg font-medium text-foreground/95 leading-snug border-l-4 border-primary/50 pl-4">
       {text}
     </p>
   );

@@ -40,6 +40,22 @@
   --font-display: 'Space Grotesk', sans-serif;
 }
 
+/* Home / report shells: swap accent by mode (learner = warm amber, pro = muted cyan). */
+[data-audience="learner"] {
+  --primary: 38 92% 54%;
+  --primary-foreground: 224 71% 11%;
+  --accent: 35 100% 52%;
+  --accent-foreground: 224 71% 11%;
+  --ring: 38 92% 54%;
+}
+[data-audience="pro"] {
+  --primary: 180 72% 42%;
+  --primary-foreground: 210 40% 98%;
+  --accent: 180 65% 38%;
+  --accent-foreground: 210 40% 98%;
+  --ring: 180 72% 42%;
+}
+
 @layer base {
   * {
     @apply border-border;

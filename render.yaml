@@ -12,6 +12,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Public home: no shared API key on browser (still rate-limited). Omit on private installs.
+      - key: DEBRIEF_OPEN_WEB
+        value: "1"
+      - key: VITE_DEBRIEF_OPEN_WEB
+        value: "true"
       - key: DEBRIEF_USE_BULLMQ
         value: "1"
       - key: DEBRIEF_RUN_ANALYZER_WORKER

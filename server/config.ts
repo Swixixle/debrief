@@ -204,5 +204,6 @@ export function getBootReport(config: AppConfig): Record<string, any> {
     ci_enabled: config.ciWorkerEnabled || !!config.githubWebhookSecret,
     semantic_enabled: config.aiEnabled,
     force_http: config.forceHttp,
+    open_web: process.env.DEBRIEF_OPEN_WEB === "1",
   };
 }
