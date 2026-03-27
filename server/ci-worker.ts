@@ -349,7 +349,7 @@ async function runAnalyzerOnDir(
   outDir: string,
   runId: string
 ): Promise<{ success: boolean; error?: string; errorCode?: string; summary?: any }> {
-  const pythonBin = path.join(process.cwd(), ".pythonlibs/bin/python3");
+  const pythonBin = process.env.PYTHON_EXEC_PATH || "python3";
   if (!existsSync(pythonBin)) {
     return { 
       success: false, 

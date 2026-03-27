@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: debrief
+    env: node
+    buildCommand: npm ci && pip install -e . && npm run build
+    startCommand: node dist/index.cjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_EXEC_PATH
+        value: python3
+      - key: DATABASE_URL
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: ADMIN_KEY
+        sync: false
+
+databases:
+  - name: debrief-db
+    databaseName: debrief
+    user: debrief

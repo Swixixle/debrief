@@ -931,7 +931,7 @@ async function runAnalysis(projectId: number, source: string, mode: string) {
     await storage.updateProjectStatus(projectId, status);
   };
 
-  const pythonBin = path.join(process.cwd(), ".pythonlibs/bin/python3");
+  const pythonBin = process.env.PYTHON_EXEC_PATH || "python3";
   if (!existsSync(pythonBin)) {
     logEvent(projectId, "fatal", { reason: "python_not_found", path: pythonBin });
     await finishOnce("failed", "python_not_found");
