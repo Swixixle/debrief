@@ -1,20 +1,28 @@
-import { useRoute, Link } from "wouter";
-import { useAnalysisStatus } from "@/hooks/use-projects";
+import { useRoute, Link, useLocation } from "wouter";
+import { useAnalysisStatus, useProjectRunDetail } from "@/hooks/use-projects";
 import { Layout } from "@/components/layout";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DebriefReport } from "@/components/DebriefReport";
 import { Loader2, AlertTriangle, ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useDebriefApiKey } from "@/contexts/DebriefApiKeyContext";
 
 export default function ProjectDetails() {
   const [match, params] = useRoute("/projects/:id");
+  const [loc] = useLocation();
   const projectId = parseInt(params?.id || "0", 10);
   const { apiKey } = useDebriefApiKey();
   const { data, isPending, isError, error } = useAnalysisStatus(projectId);
+  const selectedRunId = useMemo(() => {
+    const q = loc.includes("?") ? loc.split("?")[1] : "";
+    const p = new URLSearchParams(q);
+    const v = p.get("runId");
+    return v ? parseInt(v, 10) : null;
+  }, [loc]);
+  const runDetailQ = useProjectRunDetail(projectId, selectedRunId);
   const [rawOpen, setRawOpen] = useState(false);
 
   if (!apiKey) {
@@ -72,7 +80,15 @@ export default function ProjectDetails() {
   }
 
   const project = data?.project;
-  const analysis = data?.analysis;
+  const analysis =
+    selectedRunId && runDetailQ.data?.analysis
+      ? runDetailQ.data.analysis
+      : data?.analysis;
+  const cacheHit = Boolean(
+    (runDetailQ.data?.run as { runMetadata?: { cache_hit?: boolean } } | undefined)?.runMetadata
+      ?.cache_hit,
+  );
+  const runDetailLoading = Boolean(selectedRunId && runDetailQ.isPending);
 
   if (!project) {
     return (
@@ -129,7 +145,22 @@ export default function ProjectDetails() {
           <AnalyzingState />
         ) : analysis ? (
           <div className="space-y-8 pb-16">
-            <DebriefReport project={{ name: project.name, url: project.url }} analysis={analysis} />
+            {runDetailLoading ? (
+              <p className="text-sm text-muted-foreground font-mono">Loading selected run…</p>
+            ) : null}
+            <div className="flex justify-end">
+              <Link href={`/projects/${project.id}/progress`}>
+                <span className="text-sm text-primary cursor-pointer">View progress (beta)</span>
+              </Link>
+            </div>
+            <DebriefReport
+              project={{ name: project.name, url: project.url }}
+              analysis={analysis}
+              projectId={project.id}
+              selectedRunId={selectedRunId}
+              cacheHit={cacheHit}
+              reportAudience={(project.reportAudience as "pro" | "learner" | undefined) ?? "pro"}
+            />
 
             <div className="rounded-lg border border-border bg-secondary/10 overflow-hidden">
               <button

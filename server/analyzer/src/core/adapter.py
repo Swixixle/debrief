@@ -291,7 +291,15 @@ def _collect_snippet_hashes(claims: Dict[str, Any], howto: Dict[str, Any]) -> Li
                 if h:
                     hashes.add(h)
 
-    for section in ["install_steps", "config", "run_dev", "run_prod", "verification_steps", "common_failures"]:
+    for section in [
+        "install_steps",
+        "config",
+        "run_dev",
+        "run_prod",
+        "verification_steps",
+        "common_failures",
+        "usage_examples",
+    ]:
         items = howto.get(section, [])
         if isinstance(items, dict):
             items = [items]

@@ -10,13 +10,16 @@ const allowlist = [
   "axios",
   "connect-pg-simple",
   "cors",
+  "bullmq",
   "date-fns",
   "drizzle-orm",
   "drizzle-zod",
   "express",
+  "extract-zip",
   "express-rate-limit",
   "express-session",
   "jsonwebtoken",
+  "ioredis",
   "memorystore",
   "multer",
   "nanoid",
@@ -25,6 +28,7 @@ const allowlist = [
   "passport",
   "passport-local",
   "pg",
+  "stripe",
   "stripe",
   "uuid",
   "ws",
@@ -37,7 +41,7 @@ async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
   console.log("building client...");
-  await viteBuild();
+  await viteBuild({ configFile: path.join(process.cwd(), "client", "vite.config.ts") });
 
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));

@@ -176,9 +176,15 @@ def _diff_metric(metric_a: Dict[str, Any], metric_b: Dict[str, Any]) -> Dict[str
 
 def _extract_hashes_from_item(item: Dict) -> Set[str]:
     hashes = set()
-    for ev in item.get("evidence", []):
-        if isinstance(ev, dict):
-            h = ev.get("snippet_hash", "")
+    ev = item.get("evidence")
+    evs: list = []
+    if isinstance(ev, dict):
+        evs = [ev]
+    elif isinstance(ev, list):
+        evs = ev
+    for e in evs:
+        if isinstance(e, dict):
+            h = e.get("snippet_hash", "")
             if h:
                 hashes.add(h)
     return hashes

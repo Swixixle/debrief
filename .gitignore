@@ -1,17 +1,18 @@
-node_modules
-dist
-.env
-.env.local
-.env.*.local
-.DS_Store
-server/public
-vite.config.ts.*
-*.tar.gz
+# Run outputs — never commit these
 out/
+tmp/
+temp/
 output/
 attached_assets/
-*.ndjson
-*.swp
+
+# Environment
+.env
+.env.local
+.env.production
+.env.*
+!.env.example
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -19,9 +20,49 @@ __pycache__/
 .Python
 *.so
 *.egg
+.venv/
+venv/
 *.egg-info/
+dist/
+build/
 .pytest_cache/
+
+# Node
+node_modules/
+dist/
+.next/
+.turbo/
+
+# Tauri build output
+client/src-tauri/target/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+*.ndjson
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.cursor/
+.vscode/settings.json
+.idea/
+
+# Test artifacts
 .coverage
+htmlcov/
+
+# Vite / tooling
+vite.config.ts.*
+*.tar.gz
+*.swp
 
 # Prevent accidental nested git repos in test fixtures
 **/fixtures/**/.git

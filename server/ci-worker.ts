@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import { spawn } from "child_process";
 import path from "path";
+import { getLatestAnalyzerRunDir } from "./analyzerRunDir";
 import fs from "fs/promises";
 import { existsSync, mkdirSync, statfsSync, realpathSync } from "fs";
 import { CI_ERROR_CODES, parseErrorCode } from "./ci-error-codes";
@@ -413,7 +414,8 @@ async function runAnalyzerOnDir(
 
       try {
         let summary: any = null;
-        const operatePath = path.join(outDir, "operate.json");
+        const runDir = await getLatestAnalyzerRunDir(outDir);
+        const operatePath = runDir ? path.join(runDir, "operate.json") : path.join(outDir, "operate.json");
         if (existsSync(operatePath)) {
           const raw = await fs.readFile(operatePath, "utf-8");
           const op = JSON.parse(raw);

@@ -1,6 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Analysis } from "@shared/schema";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useProjectRuns } from "@/hooks/use-projects";
+import { useLocation } from "wouter";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const DEBRIEF_VERSION = "1.0";
 
@@ -14,7 +20,126 @@ type DebriefReportProps = {
   analysis: Analysis;
   /** Optional cryptographic signature string when a certificate exists */
   evidenceSignature?: string | null;
+  /** Stored project preference: learner runs surface LEARNER_REPORT.md first */
+  reportAudience?: "pro" | "learner" | null;
+  projectId?: number;
+  selectedRunId?: number | null;
+  /** True when this view is backed by a cached analyzer result (Redis content hash hit). */
+  cacheHit?: boolean;
 };
+
+function formatRunListDate(raw: string | Date | null | undefined): string {
+  if (!raw) return "—";
+  const d = typeof raw === "string" ? new Date(raw) : raw;
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { month: "short", day: "numeric" });
+}
+
+function RunHistoryPanel({
+  projectId,
+  reportAudience,
+  selectedRunId,
+}: {
+  projectId: number;
+  reportAudience: "pro" | "learner";
+  selectedRunId: number | null;
+}) {
+  const { data: runs, isPending, isError } = useProjectRuns(projectId);
+  const [, setLocation] = useLocation();
+
+  if (isPending) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-600">
+        Loading run history…
+      </div>
+    );
+  }
+  if (isError || !runs?.length) return null;
+
+  const chronological = [...runs].reverse();
+  const chartData = chronological.map((r) => ({
+    label: formatRunListDate(r.created_at),
+    dciPct: r.dci_score != null ? Number(r.dci_score) * 100 : 0,
+  }));
+
+  const first = chronological[0];
+  const latest = chronological[chronological.length - 1];
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-6 mb-6 space-y-4">
+      <h3 className="text-lg font-semibold text-slate-900">History</h3>
+
+      {reportAudience === "learner" && runs.length >= 2 ? (
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200/80 px-4 py-3 text-sm text-emerald-950 space-y-1">
+          <p className="font-medium">Since your first run:</p>
+          <p>
+            ✅ DCI score:{" "}
+            {first?.dci_score != null ? `${(Number(first.dci_score) * 100).toFixed(1)}%` : "—"} →{" "}
+            {latest?.dci_score != null ? `${(Number(latest.dci_score) * 100).toFixed(1)}%` : "—"}
+          </p>
+          <p>
+            ✅ Claims tracked: {first?.claim_count ?? "—"} → {latest?.claim_count ?? "—"}
+          </p>
+        </div>
+      ) : null}
+
+      <div className="h-36 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
+            <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, "DCI"]} />
+            <Line type="monotone" dataKey="dciPct" stroke="#0d9488" strokeWidth={2} dot={{ r: 3 }} name="DCI" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-slate-500 border-b border-slate-200">
+              <th className="py-2 pr-3">Date</th>
+              <th className="py-2 pr-3">Mode</th>
+              <th className="py-2 pr-3">DCI</th>
+              <th className="py-2 pr-3">Claims</th>
+              <th className="py-2 pr-3">Cache</th>
+              <th className="py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((r) => (
+              <tr
+                key={r.id}
+                data-testid={`run-row-${r.id}`}
+                className={`border-b border-slate-100 ${selectedRunId === r.id ? "bg-amber-50/90" : ""}`}
+              >
+                <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
+                  {formatRunListDate(r.created_at)}
+                </td>
+                <td className="py-2 pr-3 capitalize">{r.mode}</td>
+                <td className="py-2 pr-3">
+                  {r.dci_score != null ? `${(Number(r.dci_score) * 100).toFixed(1)}%` : "—"}
+                </td>
+                <td className="py-2 pr-3">{r.claim_count ?? "—"}</td>
+                <td className="py-2 pr-3">{r.cache_hit ? "⚡" : "—"}</td>
+                <td className="py-2 text-right">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8"
+                    onClick={() => setLocation(`/projects/${projectId}?runId=${r.id}`)}
+                  >
+                    View
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 type ToolRec = {
   name: string;
@@ -180,6 +305,276 @@ function toolRecommendationsForGaps(blob: string): ToolRec[] {
   return out;
 }
 
+type DependencyGraphJson = {
+  summary?: {
+    direct_total?: number;
+    direct_production?: number;
+    direct_development?: number;
+    flagged_cve_count?: number;
+    count_by_ecosystem?: Record<string, number>;
+  };
+  lockfiles_detected?: string[];
+  dependencies?: Array<{
+    name: string;
+    version: string;
+    kind?: string;
+    ecosystem?: string;
+    license?: string | null;
+    osv_vulnerable?: boolean;
+    osv_ids?: string[];
+  }>;
+};
+
+function dependencyRows(graph: DependencyGraphJson | null | undefined): NonNullable<DependencyGraphJson["dependencies"]> {
+  const raw = graph?.dependencies;
+  return Array.isArray(raw) ? raw : [];
+}
+
+type ApiSurfaceJson = {
+  summary?: {
+    endpoint_count?: number;
+    authenticated?: number;
+    open?: number;
+    unknown_auth?: number;
+    webhooks_outbound?: number;
+    webhooks_inbound?: number;
+    websocket_signals?: number;
+  };
+  endpoints?: Array<{
+    method: string;
+    path: string;
+    auth?: string;
+    confidence?: string;
+    citation?: string;
+    file?: string;
+    line?: number;
+  }>;
+  webhooks_outbound?: Array<{ name?: string; path_or_url?: string; citation?: string; auth?: string }>;
+  webhooks_inbound?: Array<{ path_or_url?: string; citation?: string; auth?: string }>;
+  websocket?: Array<{ citation?: string; detail?: string }>;
+};
+
+function apiEndpointRows(surface: ApiSurfaceJson | null | undefined): NonNullable<ApiSurfaceJson["endpoints"]> {
+  const raw = surface?.endpoints;
+  return Array.isArray(raw) ? raw : [];
+}
+
+function ApiSurfacePanel({ surface }: { surface: ApiSurfaceJson | null | undefined }) {
+  const [filter, setFilter] = useState("");
+  const rows = apiEndpointRows(surface);
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(
+        (r) =>
+          (r.path || "").toLowerCase().includes(q) ||
+          (r.method || "").toLowerCase().includes(q) ||
+          (r.citation || "").toLowerCase().includes(q),
+      )
+    : rows;
+
+  if (!surface || rows.length === 0) {
+    return (
+      <p className="text-slate-600 text-sm">
+        No API surface snapshot was stored for this analysis. Re-run the analyzer with the latest PTA build to populate
+        static route extraction.
+      </p>
+    );
+  }
+
+  const s = surface.summary || {};
+  const n = s.endpoint_count ?? rows.length;
+  const xa = s.authenticated ?? 0;
+  const yo = s.open ?? 0;
+  const zu = s.unknown_auth ?? 0;
+  const wo = s.webhooks_outbound ?? 0;
+  const wi = s.webhooks_inbound ?? 0;
+
+  const rowClass = (auth: string | undefined) => {
+    if (auth === "OPEN") return "bg-red-50/90";
+    if (auth === "UNKNOWN") return "bg-amber-50/80";
+    return "";
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">HTTP endpoints</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{n}</p>
+          <p className="text-xs text-slate-600 mt-1">
+            Authenticated {xa} · Open {yo} · Unknown auth {zu}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Webhooks</p>
+          <p className="text-sm text-slate-800 mt-2">
+            Inbound <span className="font-semibold">{wi}</span> · Outbound <span className="font-semibold">{wo}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        <label htmlFor="api-filter" className="text-sm text-slate-600 shrink-0">
+          Filter routes
+        </label>
+        <Input
+          id="api-filter"
+          type="search"
+          placeholder="path, method, file…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="max-w-md bg-white"
+        />
+        <span className="text-xs text-slate-500">
+          Showing {filtered.length} of {rows.length}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-100 text-slate-700">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Method</th>
+              <th className="px-3 py-2 font-semibold">Path</th>
+              <th className="px-3 py-2 font-semibold">Auth</th>
+              <th className="px-3 py-2 font-semibold">File</th>
+              <th className="px-3 py-2 font-semibold">Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r, i) => (
+              <tr
+                key={`${r.citation}-${r.path}-${i}`}
+                className={`border-t border-slate-200 ${rowClass(r.auth)}`}
+              >
+                <td className="px-3 py-2 font-mono text-xs">{r.method}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-800 break-all">{r.path}</td>
+                <td className="px-3 py-2">
+                  <span
+                    className={
+                      r.auth === "OPEN"
+                        ? "text-red-800 font-semibold text-xs"
+                        : r.auth === "UNKNOWN"
+                          ? "text-amber-900 font-medium text-xs"
+                          : "text-slate-700 text-xs"
+                    }
+                  >
+                    {r.auth || "—"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-slate-700 break-all">{r.citation || "—"}</td>
+                <td className="px-3 py-2 text-slate-600 text-xs">{r.confidence || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DependencyInventoryPanel({ graph }: { graph: DependencyGraphJson | null | undefined }) {
+  const [filter, setFilter] = useState("");
+  const rows = dependencyRows(graph);
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter((d) => (d.name || "").toLowerCase().includes(q) || (d.ecosystem || "").toLowerCase().includes(q))
+    : rows;
+
+  if (!graph || rows.length === 0) {
+    return (
+      <p className="text-slate-600 text-sm">
+        No dependency inventory was stored for this analysis. Re-run the analyzer on a repo with a supported lockfile to
+        populate OSV-flagged dependency data.
+      </p>
+    );
+  }
+
+  const s = graph.summary || {};
+  const prod = s.direct_production ?? 0;
+  const dev = s.direct_development ?? 0;
+  const flagged = s.flagged_cve_count ?? 0;
+  const total = s.direct_total ?? rows.length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Direct dependencies</p>
+          <p className="text-2xl font-semibold text-slate-900 mt-1">{total}</p>
+          <p className="text-xs text-slate-600 mt-1">
+            Production {prod} · Dev {dev}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">OSV-flagged</p>
+          <p className={`text-2xl font-semibold mt-1 ${flagged > 0 ? "text-amber-800" : "text-emerald-800"}`}>{flagged}</p>
+          <p className="text-xs text-slate-600 mt-1">Known vulns (point-in-time OSV scan)</p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lockfiles</p>
+          <p className="text-sm text-slate-800 mt-2">
+            {(graph.lockfiles_detected || []).length
+              ? (graph.lockfiles_detected || []).join(", ")
+              : "—"}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        <label htmlFor="dep-filter" className="text-sm text-slate-600 shrink-0">
+          Filter by name
+        </label>
+        <Input
+          id="dep-filter"
+          type="search"
+          placeholder="e.g. lodash, PyPI…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="max-w-md bg-white"
+        />
+        <span className="text-xs text-slate-500">
+          Showing {filtered.length} of {rows.length}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-slate-200">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-100 text-slate-700">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Name</th>
+              <th className="px-3 py-2 font-semibold">Version</th>
+              <th className="px-3 py-2 font-semibold">License</th>
+              <th className="px-3 py-2 font-semibold">CVE / OSV</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((d, i) => (
+              <tr key={`${d.name}-${d.version}-${i}`} className="border-t border-slate-200">
+                <td className="px-3 py-2 font-medium text-slate-900">{d.name}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-800">{d.version}</td>
+                <td className="px-3 py-2 text-slate-700">{d.license || "—"}</td>
+                <td className="px-3 py-2">
+                  {d.osv_vulnerable ? (
+                    <span className="inline-flex flex-col gap-0.5">
+                      <span className="text-amber-800 font-medium text-xs">Flagged</span>
+                      {(d.osv_ids || []).length ? (
+                        <span className="font-mono text-[11px] text-slate-600">{(d.osv_ids || []).join(", ")}</span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500 text-xs">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function evidenceRows(analysis: Analysis): { path: string; hash: string; status: string }[] {
   const rows: { path: string; hash: string; status: string }[] = [];
   const raw = analysis.claims as any;
@@ -216,7 +611,15 @@ function sectionShell(title: string, children: React.ReactNode) {
   );
 }
 
-export function DebriefReport({ project, analysis, evidenceSignature }: DebriefReportProps) {
+export function DebriefReport({
+  project,
+  analysis,
+  evidenceSignature,
+  reportAudience = "pro",
+  projectId,
+  selectedRunId = null,
+  cacheHit = false,
+}: DebriefReportProps) {
   const narrative = (analysis as { narrative_summary?: string }).narrative_summary;
   const dossier = analysis.dossier || "";
   const summaryText = narrative?.trim()
@@ -240,6 +643,9 @@ export function DebriefReport({ project, analysis, evidenceSignature }: DebriefR
     });
   }, [analysis.claims, operate]);
 
+  const dependencyGraph = (analysis as { dependencyGraph?: DependencyGraphJson | null }).dependencyGraph;
+  const apiSurface = (analysis as { apiSurface?: ApiSurfaceJson | null }).apiSurface;
+
   const anatomy = useMemo(() => anatomyProse(operate), [operate]);
   const blob = useMemo(() => collectGapText(unknownsList, operate), [unknownsList, operate]);
   const tools = useMemo(() => toolRecommendationsForGaps(blob), [blob]);
@@ -255,7 +661,9 @@ export function DebriefReport({ project, analysis, evidenceSignature }: DebriefR
     analysis.coverage && typeof (analysis.coverage as any).run_id === "string",
   );
 
-  return (
+  const learnerMd = ((analysis as { learnerReport?: string | null }).learnerReport || "").trim();
+
+  const proArticle = (
     <article className="bg-white text-slate-900 rounded-lg border border-slate-200 shadow-sm overflow-hidden max-w-4xl mx-auto">
       <header className="flex flex-wrap items-start justify-between gap-4 px-8 py-6 border-b border-slate-200 bg-white">
         <div>
@@ -334,8 +742,23 @@ export function DebriefReport({ project, analysis, evidenceSignature }: DebriefR
                 {p}
               </p>
             ))}
-            <div className="mt-6 rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              [ Dependency map coming soon ]
+            <div className="mt-6">
+              <Tabs defaultValue="dependencies" className="w-full">
+                <TabsList className="grid w-full max-w-md grid-cols-2 bg-slate-100 p-1">
+                  <TabsTrigger value="dependencies" className="text-xs sm:text-sm">
+                    Dependencies
+                  </TabsTrigger>
+                  <TabsTrigger value="api" className="text-xs sm:text-sm">
+                    API surface
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="dependencies" className="mt-4">
+                  <DependencyInventoryPanel graph={dependencyGraph ?? undefined} />
+                </TabsContent>
+                <TabsContent value="api" className="mt-4">
+                  <ApiSurfacePanel surface={apiSurface ?? undefined} />
+                </TabsContent>
+              </Tabs>
             </div>
           </>,
         )}
@@ -449,5 +872,68 @@ export function DebriefReport({ project, analysis, evidenceSignature }: DebriefR
         )}
       </div>
     </article>
+  );
+
+  const historyBlock =
+    projectId != null ? (
+      <RunHistoryPanel projectId={projectId} reportAudience={reportAudience} selectedRunId={selectedRunId} />
+    ) : null;
+
+  const cacheBanner = cacheHit ? (
+    <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 text-sm">
+      ⚡ Returned from cache — no changes since last run.
+    </div>
+  ) : null;
+
+  if (!learnerMd) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-4">
+        {cacheBanner}
+        {historyBlock}
+        {proArticle}
+      </div>
+    );
+  }
+
+  const defaultReportTab = reportAudience === "learner" ? "learner" : "pro";
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-4">
+      {cacheBanner}
+      {historyBlock}
+      <Tabs defaultValue={defaultReportTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2 bg-amber-100/80 border border-amber-200/90 p-1 h-auto">
+          <TabsTrigger
+            value="learner"
+            className="data-[state=active]:bg-orange-100 data-[state=active]:text-orange-950 data-[state=active]:shadow-sm text-amber-950/90 rounded-md"
+          >
+            Learner Report
+          </TabsTrigger>
+          <TabsTrigger
+            value="pro"
+            className="data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-md"
+          >
+            Pro Report
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="learner" className="mt-4 focus-visible:outline-none">
+          <article className="rounded-xl border border-amber-200/90 bg-gradient-to-b from-amber-50 via-orange-50/50 to-amber-50/30 shadow-sm overflow-hidden text-amber-950">
+            <header className="px-6 py-4 border-b border-amber-200/70 bg-orange-100/40">
+              <p className="text-xs font-semibold uppercase tracking-widest text-amber-800/90">Learner mode</p>
+              <h2 className="text-xl font-semibold text-amber-950 mt-1">Plain-language debrief</h2>
+              <p className="text-sm text-amber-900/85 mt-1 max-w-prose">
+                Written for builders who are not diving into the technical dossier first — same analysis, warmer words.
+              </p>
+            </header>
+            <div className="px-6 py-8 prose prose-stone max-w-none prose-headings:text-amber-950 prose-a:text-orange-800 prose-strong:text-amber-950 prose-li:marker:text-amber-700">
+              <ReactMarkdown>{learnerMd}</ReactMarkdown>
+            </div>
+          </article>
+        </TabsContent>
+        <TabsContent value="pro" className="mt-4 focus-visible:outline-none">
+          {proArticle}
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

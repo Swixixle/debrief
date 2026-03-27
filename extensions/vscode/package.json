@@ -1,0 +1,24 @@
+{
+  "name": "debrief",
+  "displayName": "Debrief",
+  "description": "Stub — analyze folders with Debrief (full extension TBD).",
+  "version": "0.0.1",
+  "publisher": "debrief",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "echo 'stub — compile extension.ts in a later pass'"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "debrief.analyzeFolder",
+        "title": "Analyze with Debrief (stub)"
+      }
+    ]
+  }
+}

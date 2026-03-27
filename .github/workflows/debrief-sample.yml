@@ -1,0 +1,21 @@
+# Sample workflow for teams using Debrief from GitHub Actions.
+# Replace `debrief-app/action@v1` with your published action when available.
+name: Debrief Analysis
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # - name: Run Debrief
+      #   uses: debrief-app/action@v1
+      #   with:
+      #     api-key: ${{ secrets.DEBRIEF_API_KEY }}
+      #     mode: learner
+      - name: Placeholder
+        run: echo "Wire Debrief GitHub Action when published — see docs/CONTEXT.md"

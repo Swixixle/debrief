@@ -1,13 +1,71 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, index, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, index, uuid, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  clerkUserId: text("clerk_user_id"),
+  email: text("email"),
+  stripeCustomerId: text("stripe_customer_id"),
+  creditsRemaining: integer("credits_remaining").notNull().default(3),
+  tier: text("tier").notNull().default("free"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("users_clerk_idx").on(table.clerkUserId),
+]);
+
+export const creditTransactions = pgTable("credit_transactions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  amount: integer("amount").notNull(),
+  type: text("type").notNull(),
+  runId: integer("run_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("credit_tx_user_idx").on(table.userId, table.createdAt),
+]);
+
+/** One row per analyzer execution (run history / diffs). */
+export const runs = pgTable("runs", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull(),
+  userId: integer("user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  mode: text("mode").notNull(),
+  inputType: text("input_type").notNull(),
+  dciScore: real("dci_score"),
+  claimCount: integer("claim_count"),
+  verifiedCount: integer("verified_count"),
+  openEndpointCount: integer("open_endpoint_count"),
+  criticalIssueCount: integer("critical_issue_count"),
+  dependencyCount: integer("dependency_count"),
+  flaggedDependencyCount: integer("flagged_dependency_count"),
+  runDir: text("run_dir"),
+  receiptHash: text("receipt_hash"),
+  modelUsed: text("model_used"),
+  /** Flexible per-run attrs: branch, commit_hash, environment, flags_used, input_type_detail, tauri_version, … */
+  runMetadata: jsonb("run_metadata")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  /** Latest analysis row produced by this run (for history / report fetch). */
+  analysisId: integer("analysis_id"),
+}, (table) => [
+  index("runs_project_idx").on(table.projectId, table.createdAt),
+]);
 
 export const projects = pgTable("projects", {
   id: serial("id").primaryKey(),
   url: text("url").notNull(),
   name: text("name").notNull(),
   mode: text("mode").notNull().default("github"),
+  /** pro | learner — which report style to generate when analyzing */
+  reportAudience: text("report_audience").notNull().default("pro"),
+  /** Optional Clerk / app user */
+  userId: integer("user_id"),
+  lastRunAt: timestamp("last_run_at"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -21,6 +79,14 @@ export const analyses = pgTable("analyses", {
   operate: jsonb("operate"),
   coverage: jsonb("coverage"),
   unknowns: jsonb("unknowns"),
+  /** PTA dependency_graph.json (lockfile summary + OSV flags) */
+  dependencyGraph: jsonb("dependency_graph"),
+  /** PTA api_surface.json (routes, webhooks, WS — Version A) */
+  apiSurface: jsonb("api_surface"),
+  /** LEARNER_REPORT.md body when analysis ran with report_audience=learner */
+  learnerReport: text("learner_report"),
+  /** Ingest discriminator: github, audio, zip, url, text, notion, etc. */
+  inputType: text("input_type"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -92,6 +158,9 @@ export const insertCiRunSchema = createInsertSchema(ciRuns).omit({ id: true, cre
 export const insertCiJobSchema = createInsertSchema(ciJobs).omit({ id: true, createdAt: true, attempts: true, leasedUntil: true, lastError: true });
 export const insertCertificateSchema = createInsertSchema(certificates).omit({ id: true, createdAt: true, issuedAt: true });
 
+export type User = typeof users.$inferSelect;
+export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type RunRow = typeof runs.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 export type Analysis = typeof analyses.$inferSelect;

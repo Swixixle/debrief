@@ -4,8 +4,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { monitorDrift } from "../../src/claims/monitorDrift";
-import { hashClaimExcerpt } from "../../src/claims/hash";
+import { monitorDrift } from "../claims/monitorDrift";
+import { hashClaimExcerpt } from "../claims/hash";
 const execFileAsync = promisify(execFile);
 
 describe("monitorDrift", () => {

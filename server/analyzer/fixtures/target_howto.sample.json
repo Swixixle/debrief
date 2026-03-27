@@ -64,7 +64,13 @@
   "usage_examples": [],
   "verification_steps": [],
   "common_failures": [],
-  "unknowns": [],
+  "unknowns": [
+    {
+      "what_is_missing": "Optional fixture unknown with model confidence",
+      "why_it_matters": "Schema allows confidence on unknown objects",
+      "confidence": 0.15
+    }
+  ],
   "missing_evidence_requests": [],
   "completeness": {
     "total_fields": 10,

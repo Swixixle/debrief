@@ -18,6 +18,26 @@ from server.analyzer.src.schema_validator import (
 )
 
 
+def _resolve_run_artifacts_dir(output_path: Path) -> Path:
+    """
+    Analyzer writes under output_dir/runs/<run-id>/. If the caller passes the base
+    output dir, use the latest run subfolder that contains target_howto.json.
+    """
+    if (output_path / "target_howto.json").exists():
+        return output_path
+    runs = output_path / "runs"
+    if runs.is_dir():
+        candidates = sorted(
+            [p for p in runs.iterdir() if p.is_dir()],
+            key=lambda p: p.name,
+            reverse=True,
+        )
+        for p in candidates:
+            if (p / "target_howto.json").exists():
+                return p
+    return output_path
+
+
 def validate_outputs(output_dir: str) -> int:
     """
     Validate analyzer outputs in the given directory.
@@ -26,17 +46,18 @@ def validate_outputs(output_dir: str) -> int:
         0 on success, 1 on failure
     """
     output_path = Path(output_dir)
+    artifact_root = _resolve_run_artifacts_dir(output_path)
     errors: List[str] = []
     
     # Check that required files exist
-    operate_file = output_path / "operate.json"
-    howto_file = output_path / "target_howto.json"
+    operate_file = artifact_root / "operate.json"
+    howto_file = artifact_root / "target_howto.json"
     
     if not operate_file.exists():
-        errors.append(f"operate.json not found in {output_dir}")
+        errors.append(f"operate.json not found in {artifact_root}")
     
     if not howto_file.exists():
-        errors.append(f"target_howto.json not found in {output_dir}")
+        errors.append(f"target_howto.json not found under {output_path} (checked {artifact_root})")
     
     if errors:
         print("❌ Required output files missing:")

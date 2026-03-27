@@ -23,6 +23,11 @@ class RenderMode(str, Enum):
     plain = "plain"
 
 
+class ReportAudience(str, Enum):
+    pro = "pro"
+    learner = "learner"
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """Program Totality Analyzer CLI."""
@@ -38,6 +43,12 @@ def analyze(
     replit: bool = typer.Option(False, "--replit", help="Analyze current Replit workspace"),
     root: Optional[str] = typer.Option(None, "--root", help="Subdirectory within target to scope analysis"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Deterministic mode: skip LLM calls, produce only profiler/indexer outputs"),
+    report_audience: ReportAudience = typer.Option(
+        ReportAudience.pro,
+        "--mode",
+        "-m",
+        help='Output audience: "pro" (technical artifacts, default) or "learner" (also writes LEARNER_REPORT.md)',
+    ),
     mode: RenderMode = typer.Option(RenderMode.engineer, "--render-mode", help="Report rendering mode: engineer, auditor, executive, or plain (one-pager audience mode)"),
     include_history: bool = typer.Option(False, "--include-history", help="Embed git hotspots into dossier"),
     history_since: str = typer.Option("90d", "--history-since", help="Git history window, e.g. 90d or YYYY-MM-DD"),
@@ -45,6 +56,7 @@ def analyze(
     history_include: Optional[str] = typer.Option(None, "--history-include", help="Comma-separated globs to include"),
     history_exclude: Optional[str] = typer.Option(None, "--history-exclude", help="Comma-separated globs to exclude"),
     demo: bool = typer.Option(False, "--demo", help="Generate demo mode outputs (DEMO_DOSSIER.md, DEMO_SUMMARY.json)"),
+    model: str = typer.Option("gpt-4.1", "--model", "-M", help="OpenAI chat model id (e.g. gpt-4.1-mini)"),
 ):
     """
     Analyze a software project and generate a dossier.
@@ -56,6 +68,7 @@ def analyze(
 
     Use --no-llm for deterministic extraction without LLM dependency.
     Use --render-mode to select report rendering: engineer (default), auditor, executive, or plain (one-pager).
+    Use --model to override the default OpenAI model for all LLM steps.
     """
     console = Analyzer.get_console()
 
@@ -77,11 +90,23 @@ def analyze(
 
     if no_llm:
         console.print("[bold yellow]--no-llm mode:[/bold yellow] Skipping LLM calls, deterministic outputs only")
+    else:
+        console.print(f"[bold cyan]LLM model:[/bold cyan] {model}")
 
     console.print(f"[bold cyan]Render mode:[/bold cyan] {mode.value}")
+    console.print(f"[bold cyan]Report audience:[/bold cyan] {report_audience.value}")
 
     try:
-        analyzer = Analyzer(source, output_dir, mode=input_mode, root=root, no_llm=no_llm, render_mode=mode.value)
+        analyzer = Analyzer(
+            source,
+            output_dir,
+            mode=input_mode,
+            root=root,
+            no_llm=no_llm,
+            render_mode=mode.value,
+            llm_model=model,
+            report_audience=report_audience.value,
+        )
         asyncio.run(analyzer.run(
             include_history=include_history,
             history_since=history_since,

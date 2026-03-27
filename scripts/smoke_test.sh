@@ -24,9 +24,14 @@ pta analyze --replit --no-llm -o "$OUT"
 echo "  PASS"
 
 echo "[5/6] Checking output files..."
+RUN_DIR="$(ls -1dt "$OUT"/runs/* 2>/dev/null | head -n 1)"
+if [ -z "${RUN_DIR:-}" ] || [ ! -d "$RUN_DIR" ]; then
+  echo "  FAIL: no runs/<run-id> directory under $OUT"
+  exit 1
+fi
 for f in target_howto.json coverage.json claims.json index.json DOSSIER.md replit_profile.json; do
-  if [ ! -f "$OUT/$f" ]; then
-    echo "  FAIL: missing $f"
+  if [ ! -f "$RUN_DIR/$f" ]; then
+    echo "  FAIL: missing $f in $RUN_DIR"
     exit 1
   fi
 done

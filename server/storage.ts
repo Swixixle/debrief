@@ -1,9 +1,23 @@
 import { db } from "./db";
 import { pool } from "./db";
 import {
-  projects, analyses, ciRuns, ciJobs, webhookDeliveries, certificates,
-  type InsertProject, type InsertAnalysis, type Project, type Analysis,
-  type CiRun, type InsertCiRun, type CiJob, type Certificate, type InsertCertificate,
+  projects,
+  analyses,
+  runs,
+  ciRuns,
+  ciJobs,
+  webhookDeliveries,
+  certificates,
+  type InsertProject,
+  type InsertAnalysis,
+  type Project,
+  type Analysis,
+  type RunRow,
+  type CiRun,
+  type InsertCiRun,
+  type CiJob,
+  type Certificate,
+  type InsertCertificate,
 } from "@shared/schema";
 import { eq, desc, and, or, lt, asc, sql } from "drizzle-orm";
 
@@ -32,6 +46,11 @@ export interface IStorage {
   getCertificate(id: string): Promise<Certificate | undefined>;
   getCertificatesByAnalysisId(analysisId: number): Promise<Certificate[]>;
   getCertificatesByTenantId(tenantId: string, limit?: number): Promise<Certificate[]>;
+
+  insertRun(row: typeof runs.$inferInsert): Promise<RunRow>;
+  listRunsForProject(projectId: number, limit?: number): Promise<RunRow[]>;
+  getProjectRun(projectId: number, runId: number): Promise<RunRow | undefined>;
+  getAnalysisById(id: number): Promise<Analysis | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -230,6 +249,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(certificates.tenantId, tenantId))
       .orderBy(desc(certificates.issuedAt))
       .limit(limit);
+  }
+
+  async insertRun(row: typeof runs.$inferInsert): Promise<RunRow> {
+    const [created] = await db.insert(runs).values(row).returning();
+    return created;
+  }
+
+  async listRunsForProject(projectId: number, limit: number = 100): Promise<RunRow[]> {
+    return await db
+      .select()
+      .from(runs)
+      .where(eq(runs.projectId, projectId))
+      .orderBy(desc(runs.createdAt))
+      .limit(limit);
+  }
+
+  async getProjectRun(projectId: number, runId: number): Promise<RunRow | undefined> {
+    const [row] = await db
+      .select()
+      .from(runs)
+      .where(and(eq(runs.projectId, projectId), eq(runs.id, runId)))
+      .limit(1);
+    return row;
+  }
+
+  async getAnalysisById(id: number): Promise<Analysis | undefined> {
+    const [row] = await db.select().from(analyses).where(eq(analyses.id, id)).limit(1);
+    return row;
   }
 }
 

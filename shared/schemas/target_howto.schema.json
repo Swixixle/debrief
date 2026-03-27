@@ -118,6 +118,12 @@
                 "type": "string", 
                 "enum": ["low", "medium", "high"],
                 "description": "Severity level of this unknown"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Model-estimated confidence for this unknown item (optional)"
               }
             }
           }

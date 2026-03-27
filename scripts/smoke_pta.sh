@@ -12,6 +12,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
+PYTHON="${ROOT_DIR}/.venv/bin/python3"
+if [ ! -x "$PYTHON" ]; then
+  PYTHON="python3"
+fi
+
 echo "==> PTA Smoke Test"
 echo
 
@@ -30,7 +35,7 @@ info() {
 }
 
 # Check prerequisites
-command -v python3 >/dev/null 2>&1 || error "python3 not found"
+command -v "${PYTHON}" >/dev/null 2>&1 || error "${PYTHON} not found (create .venv: python3 -m venv .venv && .venv/bin/pip install -e .)"
 
 # Create tiny fixture repo if it doesn't exist
 FIXTURE_DIR="$ROOT_DIR/server/analyzer/fixtures/tiny_repo"
@@ -88,22 +93,23 @@ info "  Output: $OUTPUT_DIR"
 
 cd "$ROOT_DIR"
 
-python3 -m server.analyzer.analyzer_cli analyze "$FIXTURE_DIR" \
+"${PYTHON}" -m server.analyzer.analyzer_cli analyze "$FIXTURE_DIR" \
     --output-dir "$OUTPUT_DIR" \
     --no-llm \
     2>&1 | tee "$OUTPUT_DIR/analyzer.log" || error "Analyzer failed"
 
 # Validate outputs using Python validator
 info "Validating outputs against schemas..."
-python3 -m server.analyzer.src.validate_outputs "$OUTPUT_DIR" || error "Validation failed"
+"${PYTHON}" -m server.analyzer.src.validate_outputs "$OUTPUT_DIR" || error "Validation failed"
 
 echo
 info "==> Smoke test PASSED ✅"
 echo
 echo "Output directory: $OUTPUT_DIR"
-echo "Review outputs:"
-echo "  - $OUTPUT_DIR/operate.json"
-echo "  - $OUTPUT_DIR/target_howto.json"
+RUN_DIR="$(ls -1dt "$OUTPUT_DIR"/runs/* 2>/dev/null | head -n 1)"
+echo "Review outputs (latest run):"
+echo "  - $RUN_DIR/operate.json"
+echo "  - $RUN_DIR/target_howto.json"
 echo
 
 exit 0

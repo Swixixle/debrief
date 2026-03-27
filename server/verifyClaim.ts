@@ -1,5 +1,5 @@
 import type { Argv } from "yargs";
-import { hashClaimExcerpt } from "../src/claims/hash";
+import { hashClaimExcerpt } from "./claims/hash";
 import * as fs from "fs";
 
 export function registerVerifyClaim(y: Argv) {

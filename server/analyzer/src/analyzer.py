@@ -108,7 +108,7 @@ import asyncio
 import hashlib
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from rich.console import Console
 import openai
 from dotenv import load_dotenv
@@ -126,6 +126,8 @@ from .schema_validator import validate_operate_json, validate_target_howto_json
 
 load_dotenv()
 
+DEFAULT_LLM_MODEL = "gpt-4.1"
+
 
 class Analyzer:
 
@@ -135,10 +137,23 @@ class Analyzer:
         # Canonical artifact path: always write to run_dir/filename
         return self.run_dir / filename
 
-    def __init__(self, source: str, output_dir: str, mode: str = "github", root: Optional[str] = None, no_llm: bool = False, render_mode: str = "engineer"):
+    def __init__(
+        self,
+        source: str,
+        output_dir: str,
+        mode: str = "github",
+        root: Optional[str] = None,
+        no_llm: bool = False,
+        render_mode: str = "engineer",
+        llm_model: Optional[str] = None,
+        report_audience: str = "pro",
+    ):
         self.source = source
         self.mode = mode
+        self.report_audience = report_audience if report_audience in ("pro", "learner") else "pro"
         self.output_dir = Path(output_dir)
+        lm = (llm_model or DEFAULT_LLM_MODEL or "").strip()
+        self.llm_model = lm if lm else DEFAULT_LLM_MODEL
 
         # --- Patch: define repo_dir as resolved project root for evidence helpers ---
         # Prefer explicit root arg if provided; otherwise infer from self.root or cwd
@@ -146,7 +161,9 @@ class Analyzer:
             self.repo_dir = Path(root).resolve()
         else:
             self.repo_dir = Path(self.root).resolve() if getattr(self, "root", None) else Path.cwd().resolve()
+        # Per-run packs live under runs/<run-id>/packs once run() starts
         self.packs_dir = self.output_dir / "packs"
+        self.run_dir: Optional[Path] = None
         self.console = Console()
         self.replit_profile: Optional[Dict[str, Any]] = None
         self.acquire_result: Optional[AcquireResult] = None
@@ -156,11 +173,9 @@ class Analyzer:
         self._skipped_count: int = 0
         self.no_llm = no_llm
         self.render_mode = render_mode
-
+        self._api_surface_result: Optional[Dict[str, Any]] = None
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.packs_dir.mkdir(parents=True, exist_ok=True)
-
 
         self.client = None
         if not no_llm:
@@ -197,6 +212,8 @@ class Analyzer:
         run_dir = base_output_dir / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         self.run_dir = run_dir
+        self.packs_dir = run_dir / "packs"
+        self.packs_dir.mkdir(parents=True, exist_ok=True)
 
         ctx = RunContext(
             repo_root=str(self.repo_dir),
@@ -263,21 +280,40 @@ class Analyzer:
 
             if self.no_llm:
                 def build_deterministic():
+                    from .core.api_surface import extract_api_surface, append_open_endpoint_security_section
+
                     self.console.print("[bold]Step 4: Building deterministic howto (--no-llm)...[/bold]")
+                    self.console.print("[cyan]Step 4b: API surface extraction...[/cyan]")
+                    self._api_surface_result = extract_api_surface(Path(self.repo_dir), file_index)
+                    _s = self._api_surface_result.get("summary") or {}
+                    self.console.print(
+                        f"  API surface: {_s.get('endpoint_count', 0)} endpoints "
+                        f"(open auth={_s.get('open', 0)})"
+                    )
                     howto = self._build_deterministic_howto()
                     howto["completeness"] = self._compute_completeness(howto)
                     dossier = self._build_deterministic_dossier(howto)
+                    dossier = dossier.rstrip() + append_open_endpoint_security_section(self._api_surface_result)
                     claims = self._build_deterministic_claims(howto, file_index)
                     return howto, dossier, claims
                 howto, dossier, claims = run_stage("build_deterministic", build_deterministic, ctx)
             else:
                 async def extract_and_generate():
+                    from .core.api_surface import extract_api_surface
+
                     self.console.print("[bold]Step 4: Extracting how-to...[/bold]")
                     howto = await self.extract_howto(packs)
                     howto = self._normalize_howto_evidence(howto)
                     howto["completeness"] = self._compute_completeness(howto)
+                    self.console.print("[cyan]Step 4b: API surface extraction...[/cyan]")
+                    self._api_surface_result = extract_api_surface(Path(self.repo_dir), file_index)
+                    _s = self._api_surface_result.get("summary") or {}
+                    self.console.print(
+                        f"  API surface: {_s.get('endpoint_count', 0)} endpoints "
+                        f"(open auth={_s.get('open', 0)})"
+                    )
                     self.console.print("[bold]Step 5: Generating claims & dossier...[/bold]")
-                    dossier, claims = await self.generate_dossier(packs, howto)
+                    dossier, claims = await self.generate_dossier(packs, howto, self._api_surface_result)
                     claims = self._verify_claims_evidence(claims)
                     return howto, dossier, claims
                 howto, dossier, claims = await run_stage("extract_and_generate", extract_and_generate, ctx)
@@ -304,8 +340,11 @@ class Analyzer:
                     "reason": "Analyzer source files excluded to prevent false-positive pattern matches"
                 }
             })
+            dossier_final, dossier_file_sha, dossier_main_sha = self._finalize_dossier_for_output(
+                dossier, run_id
+            )
             with open(run_dir / "DOSSIER.md", "w") as f:
-                f.write(dossier)
+                f.write(dossier_final)
 
             def build_operate_stage():
                 self.console.print("[bold]Step 5b: Building operate.json...[/bold]")
@@ -324,6 +363,46 @@ class Analyzer:
                 self.console.print(f"  operate.json saved ({len(operate.get('gaps', []))} gaps, "
                                    f"boot={operate.get('readiness', {}).get('boot', {}).get('score', 0)}%)")
             run_stage("build_operate", build_operate_stage, ctx)
+
+            def dependency_graph_stage():
+                self.console.print("[bold]Step 5c: Dependency graph & OSV scan...[/bold]")
+                from .core.dependency_graph import build_dependency_graph, render_dependencies_md
+                graph = build_dependency_graph(self.repo_dir)
+                self.save_json("dependency_graph.json", graph)
+                (run_dir / "DEPENDENCIES.md").write_text(
+                    render_dependencies_md(graph), encoding="utf-8"
+                )
+                s = graph.get("summary") or {}
+                self.console.print(
+                    f"  {s.get('direct_total', 0)} deps, {s.get('flagged_cve_count', 0)} with OSV hits"
+                )
+
+            run_stage("dependency_graph", dependency_graph_stage, ctx)
+
+            def api_surface_persist_stage():
+                from .core.api_surface import extract_api_surface, render_api_surface_md
+
+                self.console.print("[bold]Step 5d: API surface artifacts...[/bold]")
+                data = self._api_surface_result
+                if not data:
+                    data = extract_api_surface(Path(self.repo_dir), file_index)
+                    self._api_surface_result = data
+                self.save_json("api_surface.json", data)
+                (run_dir / "API_SURFACE.md").write_text(render_api_surface_md(data), encoding="utf-8")
+                sc = data.get("summary") or {}
+                self.console.print(
+                    f"  api_surface.json + API_SURFACE.md "
+                    f"({sc.get('endpoint_count', 0)} endpoints, {sc.get('open', 0)} open auth)"
+                )
+
+            run_stage("api_surface_persist", api_surface_persist_stage, ctx)
+
+            self._write_receipt(
+                run_dir,
+                run_id=run_id,
+                dossier_sha256=dossier_file_sha,
+                dossier_main_sha256=dossier_main_sha,
+            )
 
             def compute_unknowns_stage():
                 self.console.print("[bold]Step 6: Computing Known Unknowns...[/bold]")
@@ -383,13 +462,23 @@ class Analyzer:
                 )
                 if change_hotspots:
                     evidence_pack["change_hotspots"] = change_hotspots
+                dg_path = run_dir / "dependency_graph.json"
+                if dg_path.exists():
+                    try:
+                        evidence_pack["dependency_graph_summary"] = json.loads(
+                            dg_path.read_text(encoding="utf-8")
+                        ).get("summary")
+                    except Exception:
+                        pass
+                if self._api_surface_result:
+                    evidence_pack["api_surface_summary"] = self._api_surface_result.get("summary")
                 pack_path = save_evidence_pack(evidence_pack, run_dir)
                 assert_pack_written(pack_path)
                 self.console.print(f"  EvidencePack saved to {pack_path}")
                 return evidence_pack
             evidence_pack = run_stage("build_evidence_pack", build_evidence_pack_stage, ctx)
 
-            from .core.render import render_onboarding_guide, render_onepager
+            from .core.render import render_onboarding_guide, render_onepager_cfo
             manifest_excerpt = ""
             manifest_path_onb = run_dir / "manifest.json"
             if manifest_path_onb.exists():
@@ -398,17 +487,17 @@ class Analyzer:
             evidence_pack_path = run_dir / "evidence_pack.v1.json"
             if evidence_pack_path.exists():
                 evidence_pack_excerpt = evidence_pack_path.read_text(encoding="utf-8")[:1000]
-            dossier_excerpt = ""
-            dossier_path_onb = run_dir / "DOSSIER.md"
-            if dossier_path_onb.exists():
-                dossier_excerpt = dossier_path_onb.read_text(encoding="utf-8")[:1000]
+            dossier_excerpt = (dossier_final or "")[:2500]
             evidence_pack["manifest_excerpt"] = manifest_excerpt
             evidence_pack["evidence_pack_excerpt"] = evidence_pack_excerpt
             evidence_pack["dossier_excerpt"] = dossier_excerpt
             onboarding_content = render_onboarding_guide(evidence_pack)
             with open(run_dir / "ONBOARDING_GUIDE.md", "w") as f:
                 f.write(onboarding_content)
-            onepager_content = render_onepager(evidence_pack)
+            dep_sum = evidence_pack.get("dependency_graph_summary")
+            onepager_content = await self._generate_onepager_executive(
+                evidence_pack, dossier_excerpt, dep_sum
+            )
             with open(run_dir / "ONEPAGER.md", "w") as f:
                 f.write(onepager_content)
 
@@ -418,6 +507,28 @@ class Analyzer:
                 report_path = save_report(report_content, run_dir, self.render_mode)
                 self.console.print(f"  Report saved to {report_path}")
             run_stage("render_report", render_report_stage, ctx)
+
+            if self.report_audience == "learner":
+                def learner_report_stage():
+                    from .render_learner import render_learner_report
+
+                    self.console.print("[bold]Step 9: Learner report (plain-language coaching)...[/bold]")
+                    api = self._api_surface_result or {}
+                    claims_dict = claims if isinstance(claims, dict) else {"claims": claims}
+                    out_path = render_learner_report(
+                        analyzer=self,
+                        run_dir=run_dir,
+                        howto=howto,
+                        claims=claims_dict,
+                        api_surface=api,
+                        dossier_body=dossier_final or "",
+                        evidence_pack=evidence_pack,
+                        file_index=file_index,
+                    )
+                    self._add_receipt_artifact(run_dir, "LEARNER_REPORT.md")
+                    self.console.print(f"  {out_path.name} saved")
+
+                run_stage("learner_report", learner_report_stage, ctx)
 
             _safe_print("[bold green]All outputs written.[/bold green]")
         except Exception:
@@ -534,10 +645,12 @@ class Analyzer:
     def _parse_evidence_string(self, ev_str: str) -> Optional[dict]:
         if not isinstance(ev_str, str):
             return ev_str if isinstance(ev_str, dict) else None
-        m = re.match(r'^([^:]+):(\d+)(?:-(\d+))?', ev_str.strip())
+        s = ev_str.strip()
+        # LLM form: path:L55 or path:L55-L76 (optional L before line / range endpoints)
+        m = re.match(r"^([^:]+):L?(\d+)(?:-L?(\d+))?$", s)
         if not m:
             return None
-        path = m.group(1)
+        path = m.group(1).strip()
         line_start = int(m.group(2))
         line_end = int(m.group(3)) if m.group(3) else line_start
         if line_end - line_start > self.MAX_SNIPPET_LINES:
@@ -546,6 +659,38 @@ class Analyzer:
         if snippet is None:
             return None
         return make_evidence(path, line_start, line_end, snippet)
+
+    def _coerce_string_evidence(self, ev_raw: Any) -> Any:
+        """Split comma-separated file:line refs, parse each; return dict, list[dict], or original string."""
+        if not isinstance(ev_raw, str):
+            return ev_raw
+        fragments = [f.strip() for f in ev_raw.split(",") if f.strip()]
+        if not fragments:
+            return ev_raw
+        parsed: list[dict] = []
+        for frag in fragments:
+            p = self._parse_evidence_string(frag)
+            if p:
+                parsed.append(p)
+        if not parsed:
+            return ev_raw
+        if len(parsed) == 1:
+            return parsed[0]
+        return parsed
+
+    def _flatten_evidence_list(self, ev_list: list) -> list:
+        """Expand list entries so one comma-separated string becomes multiple evidence dicts."""
+        out: list = []
+        for e in ev_list:
+            if isinstance(e, str):
+                coerced = self._coerce_string_evidence(e)
+                if isinstance(coerced, list):
+                    out.extend(coerced)
+                else:
+                    out.append(coerced)
+            else:
+                out.append(e)
+        return out
 
     def _read_lines_from_repo(self, path: str, line_start: int, line_end: int = 0) -> Optional[str]:
         if line_end < line_start:
@@ -575,16 +720,45 @@ class Analyzer:
     def _read_line_from_repo(self, path: str, line_num: int) -> Optional[str]:
         return self._read_lines_from_repo(path, line_num, line_num)
 
+    def _sanitize_howto_evidence_value(self, ev: Any) -> Any:
+        """
+        Ensure evidence matches target_howto schema (object or array of objects).
+        LLMs sometimes emit prose strings (e.g. 'README.md: entire sections up to 456'); drop those.
+        """
+        if ev is None:
+            return None
+        if isinstance(ev, str):
+            coerced = self._coerce_string_evidence(ev)
+            return coerced if not isinstance(coerced, str) else None
+        if isinstance(ev, dict):
+            return ev
+        if isinstance(ev, list):
+            out: List[Any] = []
+            for e in ev:
+                cleaned = self._sanitize_howto_evidence_value(e)
+                if cleaned is None:
+                    continue
+                if isinstance(cleaned, list):
+                    out.extend(cleaned)
+                else:
+                    out.append(cleaned)
+            return out if out else None
+        return None
+
     def _normalize_howto_evidence(self, howto: dict) -> dict:
-        evidence_fields = ["install_steps", "config", "run_dev", "run_prod", "verification_steps", "common_failures"]
+        evidence_fields = ["install_steps", "config", "run_dev", "run_prod", "verification_steps", "common_failures", "usage_examples"]
         for field in evidence_fields:
             items = howto.get(field, [])
             if not isinstance(items, list):
                 continue
             for item in items:
-                if "evidence" in item and isinstance(item["evidence"], str):
-                    parsed = self._parse_evidence_string(item["evidence"])
-                    item["evidence"] = parsed if parsed else item["evidence"]
+                if not isinstance(item, dict) or "evidence" not in item:
+                    continue
+                cleaned = self._sanitize_howto_evidence_value(item.get("evidence"))
+                if cleaned is None:
+                    item.pop("evidence", None)
+                else:
+                    item["evidence"] = cleaned
 
         rp = howto.get("replit_execution_profile", {})
         if isinstance(rp, dict):
@@ -592,27 +766,24 @@ class Analyzer:
             if isinstance(pb, dict) and "evidence" in pb:
                 ev_list = pb["evidence"]
                 if isinstance(ev_list, list):
-                    pb["evidence"] = [
-                        self._parse_evidence_string(e) if isinstance(e, str) else e
-                        for e in ev_list
-                    ]
+                    pb["evidence"] = self._flatten_evidence_list(ev_list)
             secrets = rp.get("required_secrets", [])
             if isinstance(secrets, list):
                 for s in secrets:
                     if "referenced_in" in s and isinstance(s["referenced_in"], list):
-                        s["referenced_in"] = [
-                            self._parse_evidence_string(r) if isinstance(r, str) else r
-                            for r in s["referenced_in"]
-                        ]
+                        s["referenced_in"] = self._flatten_evidence_list(s["referenced_in"])
             obs = rp.get("observability", {})
             if isinstance(obs, dict) and "evidence" in obs:
                 ev_list = obs["evidence"]
                 if isinstance(ev_list, list):
-                    obs["evidence"] = [
-                        self._parse_evidence_string(e) if isinstance(e, str) else e
-                        for e in ev_list
-                    ]
+                    obs["evidence"] = self._flatten_evidence_list(ev_list)
 
+        # Strip null commands before validation
+        all_step_fields = ["install_steps", "config", "run_dev", "run_prod", "verification_steps", "common_failures", "usage_examples"]
+        for field in all_step_fields:
+            for item in howto.get(field, []):
+                if isinstance(item, dict) and item.get("command") is None:
+                    item["command"] = ""
         return howto
 
     def _verify_claims_evidence(self, claims_data: dict) -> dict:
@@ -679,6 +850,8 @@ class Analyzer:
         deductions = []
 
         def _is_verified_evidence(ev):
+            if isinstance(ev, list):
+                return any(_is_verified_evidence(e) for e in ev if e is not None)
             if not isinstance(ev, dict):
                 return False
             if ev.get("kind") == "file_exists":
@@ -856,7 +1029,7 @@ RULES:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1",
+                model=self.llm_model,
                 messages=[
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_content}
@@ -872,82 +1045,148 @@ RULES:
                 "unknowns": [{"what_is_missing": "Full how-to extraction failed", "why_it_matters": "No operator manual available", "what_evidence_needed": "Retry or check API key"}],
             }
 
-    async def generate_dossier(self, packs: Dict[str, str], howto: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-        replit_section = ""
-        if self.mode == "replit" and self.replit_profile:
-            replit_section = """
-10. **Replit Execution Profile**
-    Include ALL of the following subsections with evidence citations (file:line):
-    - Run command (from .replit)
-    - Language/runtime
-    - Port binding (port number, 0.0.0.0 binding, env PORT usage)
-    - Required secrets (names only, NEVER values, cite file:line where each is referenced)
-    - External APIs referenced (with evidence files)
-    - Nix packages required (from replit.nix)
-    - Deployment assumptions
-    - Observability/logging (present or absent, cite evidence)
-    - Limitations (what could NOT be determined)
-"""
-
-        prompt = f"""You are the 'Program Totality Analyzer'. Write a Markdown DOSSIER about this target system based on static artifacts only.
-
-SCOPE LIMITATION: This dossier is derived from static source artifacts (code, config, lockfiles). It does NOT observe runtime behavior, prove correctness, or certify security. Every claim must be labeled with its epistemic status.
-
-MANDATORY SECTIONS:
-1. **Identity of Target System** (What is it? What is it NOT?)
-2. **Purpose & Jobs-to-be-done**
-3. **Capability Map**
-4. **Architecture Snapshot**
-5. **How to Use the Target System** (Operator manual - refine the provided howto JSON into readable, actionable steps with evidence citations)
-6. **Integration Surface** (APIs, webhooks, SDKs, data formats)
-7. **Data & Security Posture** (Storage, encryption, auth, secret handling)
-8. **Operational Reality** (What it takes to keep running)
-9. **Maintainability & Change Risk**
-{replit_section}
-11. **Unknowns / Missing Evidence** (What could NOT be determined - be specific)
-12. **Receipts** (Evidence index: list every file:line citation used above)
-
-RULES:
-- Every claim MUST cite evidence as (file:line) inline, pointing to actual source files in the target project.
-- If no evidence exists for a claim, say "UNKNOWN — evidence needed: <describe>" and add to Unknowns section.
-- Label each claim: VERIFIED (hash-anchored to source), INFERRED (derived from context but not hash-verified), or UNKNOWN.
-- Do NOT hallucinate file paths or line numbers. Do NOT use vague adjectives. Be specific and operational.
-- Do NOT cite PTA-generated output (dossier text, claims.json, evidence_pack) as evidence for claims. Evidence must reference the target system's own artifacts.
-- The "How to Use" section must read like an actual operator manual with concrete commands.
-- For Replit projects: the Replit Execution Profile section is MANDATORY.
-- All secrets must be referenced by NAME only, never expose values.
-"""
-
-        howto_str = json.dumps(howto, indent=2, default=str)
-        replit_str = ""
-        if self.replit_profile:
-            replit_str = f"\n\nREPLIT PROFILE (detected by static analysis):\n{json.dumps(self.replit_profile, indent=2, default=str)}"
-
-        user_content = (
-            f"HOWTO JSON:\n{howto_str}\n\n"
-            f"DOCS:\n{packs.get('docs', '')[:30000]}\n\n"
-            f"CONFIG:\n{packs.get('config', '')[:30000]}\n\n"
-            f"CODE SNAPSHOT:\n{packs.get('code', '')[:40000]}"
-            f"{replit_str}"
+    async def _dossier_llm_chunk(
+        self,
+        section_instructions: str,
+        user_content: str,
+        max_completion_tokens: int = 6144,
+    ) -> str:
+        """Generate one part of the dossier in a separate API call to stay under TPM limits."""
+        if not self.client:
+            return ""
+        base_rules = (
+            "You are the 'Program Totality Analyzer'. Output ONLY Markdown for this turn — no preamble.\n"
+            "SCOPE: Static source artifacts only; you do not observe runtime behavior.\n"
+            "Substantive claims must cite evidence as (path:line) from the target project.\n"
+            "Use epistemic labels where appropriate: VERIFIED, INFERRED, or UNKNOWN.\n"
+            "Do NOT hallucinate paths or line numbers. Do NOT cite PTA outputs (dossier, claims.json, evidence_pack).\n"
+            "Secrets: names only, never values.\n"
         )
-
+        prompt = base_rules + "\nTHIS TURN:\n" + section_instructions
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1",
+                model=self.llm_model,
                 messages=[
                     {"role": "system", "content": prompt},
-                    {"role": "user", "content": user_content}
+                    {"role": "user", "content": user_content},
                 ],
-                max_completion_tokens=8192,
+                max_completion_tokens=max_completion_tokens,
             )
-            dossier = response.choices[0].message.content
+            msg = response.choices[0].message.content
+            return (msg or "").strip()
+        except Exception as e:
+            self.console.print(f"[red]Dossier chunk error:[/red] {e}")
+            return f"\n\n_(Section generation failed: {e})_\n\n"
 
+    async def generate_dossier(
+        self,
+        packs: Dict[str, str],
+        howto: Dict[str, Any],
+        api_surface: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        if not self.client:
+            return "# Program Totality Dossier\n\n_(LLM client not configured.)_\n", {"claims": [], "error": "no_llm"}
+
+        howto_str = json.dumps(howto, indent=2, default=str)
+        if len(howto_str) > 42000:
+            howto_str = howto_str[:42000] + "\n/* ... truncated ... */\n"
+
+        replit_payload = ""
+        if self.replit_profile:
+            rp = json.dumps(self.replit_profile, indent=2, default=str)
+            replit_payload = f"\n\nREPLIT PROFILE (static analysis):\n{rp[:14000]}"
+
+        docs = packs.get("docs", "") or ""
+        config = packs.get("config", "") or ""
+        code = packs.get("code", "") or ""
+
+        parts: List[str] = []
+
+        parts.append(
+            await self._dossier_llm_chunk(
+                "Write these sections with EXACT markdown headings:\n"
+                "## 1. Identity of Target System\n"
+                "## 2. Purpose & Jobs-to-be-done\n"
+                "## 3. Capability Map\n",
+                f"DOCS:\n{docs[:16000]}\n\nCONFIG:\n{config[:12000]}\n\nCODE (excerpt):\n{code[:10000]}",
+            )
+        )
+
+        parts.append(
+            await self._dossier_llm_chunk(
+                "Write these sections with EXACT headings:\n"
+                "## 4. Architecture Snapshot\n"
+                "## 5. How to Use the Target System\n"
+                "Section 5 must read like an operator manual with concrete commands; ground it in the HOWTO JSON.\n",
+                f"HOWTO JSON:\n{howto_str}\n\nDOCS:\n{docs[:12000]}\n\nCODE:\n{code[:22000]}{replit_payload}",
+            )
+        )
+
+        api_block = ""
+        if api_surface:
+            from .core.api_surface import format_api_surface_for_dossier_prompt
+
+            api_block = (
+                "API_SURFACE_STATIC (machine-extracted from repository; paths are authoritative for API reach. "
+                "In ## 7 Data & Security Posture you MUST enumerate every endpoint with auth=OPEN as an explicit "
+                "operational/security risk (plain language, impact-focused). Do not invent routes beyond this JSON. "
+                "Also reference high-signal inbound webhooks and websocket signals if any.)\n"
+                + format_api_surface_for_dossier_prompt(api_surface)
+            )
+        parts.append(
+            await self._dossier_llm_chunk(
+                "## 6. Integration Surface\n## 7. Data & Security Posture\n",
+                f"{api_block[:14000]}\n\nCODE:\n{code[:22000]}\n\nCONFIG:\n{config[:20000]}\n\nDOCS:\n{docs[:8000]}",
+            )
+        )
+
+        sec89 = "## 8. Operational Reality\n## 9. Maintainability & Change Risk\n"
+        if self.mode == "replit" and self.replit_profile:
+            sec89 += (
+                "## 10. Replit Execution Profile\n"
+                "Include: run command, language/runtime, port binding, required secrets (names only), "
+                "external APIs, Nix packages, deployment assumptions, observability, limitations — each with (file:line).\n"
+            )
+        parts.append(
+            await self._dossier_llm_chunk(
+                sec89,
+                f"DOCS:\n{docs[:8000]}\nCONFIG:\n{config[:8000]}\nCODE:\n{code[:12000]}{replit_payload}",
+            )
+        )
+
+        parts.append(
+            await self._dossier_llm_chunk(
+                "## 11. Unknowns / Missing Evidence\n",
+                f"HOWTO unknowns:\n{json.dumps(howto.get('unknowns', []), indent=2, default=str)[:12000]}\n\n"
+                f"HOWTO missing_evidence_requests:\n{json.dumps(howto.get('missing_evidence_requests', []), default=str)[:4000]}\n\n"
+                f"DOCS:\n{docs[:8000]}\nCONFIG:\n{config[:8000]}",
+            )
+        )
+
+        body = "\n\n".join(p for p in parts if p)
+        receipt_input = body
+        if len(receipt_input) > 45000:
+            receipt_input = (
+                receipt_input[:22000]
+                + "\n\n[... middle omitted for length ...]\n\n"
+                + receipt_input[-22000:]
+            )
+
+        sec12 = await self._dossier_llm_chunk(
+            "Write ONLY: ## 12. Receipts (Evidence index)\n"
+            "Bullet list every distinct path:line citation present in the excerpt below (target repo files only).",
+            f"DOSSIER EXCERPT:\n{receipt_input}",
+            max_completion_tokens=4096,
+        )
+
+        dossier = f"# Program Totality Dossier\n\n{body}\n\n{sec12}"
+
+        try:
             claims = await self._extract_claims(dossier, packs)
-
             return dossier, claims
         except Exception as e:
-            self.console.print(f"[red]Error generating dossier:[/red] {e}")
-            return f"# Analysis Error\n\nFailed to generate dossier: {e}", {"error": str(e)}
+            self.console.print(f"[red]Error after dossier assembly:[/red] {e}")
+            return dossier, {"error": str(e), "claims": []}
 
     def _repair_truncated_json(self, raw: str) -> Optional[dict]:
         raw = raw.strip()
@@ -1006,14 +1245,14 @@ RULES:
 - status "evidenced" = direct file:line proof; "inferred" = reasonable but indirect; "unknown" = no evidence"""
 
         user_content = (
-            f"DOSSIER:\n{dossier[:30000]}\n\n"
-            f"CONFIG EVIDENCE:\n{packs.get('config', '')[:15000]}\n\n"
-            f"CODE EVIDENCE:\n{packs.get('code', '')[:15000]}"
+            f"DOSSIER:\n{dossier[:24000]}\n\n"
+            f"CONFIG EVIDENCE:\n{packs.get('config', '')[:12000]}\n\n"
+            f"CODE EVIDENCE:\n{packs.get('code', '')[:12000]}"
         )
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1",
+                model=self.llm_model,
                 messages=[
                     {"role": "system", "content": claims_prompt},
                     {"role": "user", "content": user_content}
@@ -1043,6 +1282,190 @@ RULES:
                 "run_id": self.acquire_result.run_id if self.acquire_result else None,
                 "is_replit": self.replit_profile is not None and self.replit_profile.get("is_replit", False),
             }
+
+    def _finalize_dossier_for_output(self, dossier_main: str, run_id: str) -> Tuple[str, str, str]:
+        """Return (full_markdown, sha256_of_full_file, sha256_of_main_before_integrity_block)."""
+        pre_hash = hashlib.sha256(dossier_main.encode("utf-8")).hexdigest()
+        ts = datetime.now(timezone.utc).isoformat()
+        sig_b64 = os.environ.get("PTA_DOSSIER_SIGNATURE", "").strip()
+        fp = os.environ.get("PTA_SIGNING_KEY_FINGERPRINT", "").strip()
+        if sig_b64 and fp:
+            sig_line = f"Signed: **yes** — key fingerprint `{fp}`"
+        elif sig_b64:
+            sig_line = "Signed: **yes** (signature material in `receipt.json`)"
+        else:
+            sig_line = "Signed: **no** (no signing material configured on analyzer host)"
+        # Content hash covers the dossier body plus integrity metadata (excluding the hash line
+        # itself), so edits to Run ID / timestamps / signing lines invalidate the hash.
+        head = (
+            dossier_main.rstrip()
+            + "\n\n## Document Integrity\n\n"
+            + f"Run ID: {run_id}\n\n"
+            + f"Generated: {ts}\n\n"
+        )
+        tail = (
+            f"{sig_line}\n\n"
+            f"This document is a point-in-time record. Any modification invalidates the hash.\n"
+        )
+        content_hash = hashlib.sha256((head + tail).encode("utf-8")).hexdigest()
+        full = head + f"Content hash: `{content_hash}`\n\n" + tail
+        file_sha = hashlib.sha256(full.encode("utf-8")).hexdigest()
+        return full, file_sha, pre_hash
+
+    def _redact_repo_source_for_receipt(self) -> str:
+        src = self.source or ""
+        if self.mode == "github" or src.startswith("http") or src.startswith("git@"):
+            return src
+        try:
+            return Path(src).name
+        except Exception:
+            return "(local)"
+
+    def _add_receipt_artifact(self, run_dir: Path, artifact_name: str) -> None:
+        p = run_dir / "receipt.json"
+        if not p.exists():
+            return
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+            arts = list(rec.get("artifacts") or [])
+            if artifact_name not in arts:
+                arts.append(artifact_name)
+                rec["artifacts"] = arts
+                p.write_text(json.dumps(rec, indent=2, default=str), encoding="utf-8")
+        except Exception:
+            return
+
+    def _write_receipt(
+        self,
+        run_dir: Path,
+        *,
+        run_id: str,
+        dossier_sha256: str,
+        dossier_main_sha256: str,
+    ) -> None:
+        ts = datetime.now(timezone.utc).isoformat()
+        sig_b64 = os.environ.get("PTA_DOSSIER_SIGNATURE", "").strip() or None
+        fp = os.environ.get("PTA_SIGNING_KEY_FINGERPRINT", "").strip() or None
+        rec: Dict[str, Any] = {
+            "schema_version": "1.0",
+            "run_id": run_id,
+            "acquire_run_id": self.acquire_result.run_id if self.acquire_result else None,
+            "generated_at": ts,
+            "dossier_file_sha256": dossier_sha256,
+            "dossier_main_body_sha256": dossier_main_sha256,
+            "model": None if self.no_llm else self.llm_model,
+            "repo_mode": self.mode,
+            "repo_source_redacted": self._redact_repo_source_for_receipt(),
+            "signed": bool(sig_b64),
+            "signature": sig_b64,
+            "signing_key_fingerprint": fp if sig_b64 else None,
+            "artifacts": [
+                "DOSSIER.md",
+                "ONEPAGER.md",
+                "DEPENDENCIES.md",
+                "dependency_graph.json",
+                "API_SURFACE.md",
+                "api_surface.json",
+                "receipt.json",
+                "target_howto.json",
+                "claims.json",
+                "operate.json",
+            ],
+            "note": "Retention-grade record for compliance or M&A due diligence. "
+            "Verify dossier_file_sha256 against the on-disk DOSSIER.md bytes.",
+        }
+        (run_dir / "receipt.json").write_text(
+            json.dumps(rec, indent=2, default=str), encoding="utf-8"
+        )
+
+    async def _generate_onepager_executive(
+        self,
+        evidence_pack: Dict[str, Any],
+        dossier_excerpt: str,
+        dependency_summary: Optional[Dict[str, Any]],
+    ) -> str:
+        from .core.render import _get_dci, render_onepager_cfo
+
+        if not self.client:
+            return render_onepager_cfo(evidence_pack, dependency_summary)
+
+        dci = _get_dci(evidence_pack)
+        dci_score = float(dci.get("score") or 0)
+        verified_samples: List[str] = []
+        for _sec, claims in (evidence_pack.get("verified") or {}).items():
+            if not isinstance(claims, list):
+                continue
+            for c in claims[:3]:
+                st = (c.get("statement") or "").strip()
+                if st and len(st) < 280:
+                    verified_samples.append(st)
+            if len(verified_samples) >= 8:
+                break
+        unk = []
+        for u in (evidence_pack.get("unknowns") or [])[:10]:
+            if isinstance(u, dict) and u.get("status") == "UNKNOWN":
+                unk.append({
+                    "category": u.get("category"),
+                    "description": (u.get("description") or "")[:400],
+                })
+        payload = {
+            "dci_score": dci_score,
+            "dci_interpretation_plain": dci.get("interpretation", ""),
+            "verified_claim_samples": verified_samples[:8],
+            "unknowns": unk[:8],
+            "dependency_summary": dependency_summary,
+            "summary_counts": evidence_pack.get("summary", {}),
+        }
+        system = """You write ONEPAGER.md as a memo to a CFO or M&A buyer evaluating a software asset.
+The reader is NOT an engineer. Target reading time: under 3 minutes.
+Rules:
+- The very first line of your output must be exactly: # Executive brief — then a blank line, then the sections below.
+- No code snippets, no file paths, no repository URLs, no line numbers.
+- Plain language only; avoid jargon (explain terms if you must use them).
+- Do not use engineer-to-engineer phrasing such as: deterministic, hash-verified, snippet-backed, source claims, DCI, evidence pack, static analysis.
+- Use EXACTLY these markdown section headings in order:
+
+## What this codebase is
+(One short paragraph.)
+
+## What it does
+(Bullet list, max 6 items: business-facing capabilities.)
+
+## What it is NOT
+(Bullet list, max 4 items: explicit limits of what this review did not prove.)
+
+## Risk flags
+(Max 5 bullets, one sentence each: security, licensing, dependency/vulnerability themes, unknowns. If dependency_summary shows flagged_cve_count > 0, mention that plain-language without naming packages unless essential.)
+
+## Confidence level
+(One short paragraph. You MUST use dci_score and summary_counts from the context JSON: state roughly what fraction of reviewed statements were anchored in material that could be double-checked in the repository — e.g. “about half,” “roughly two thirds,” “a minority.” Never say “full,” “complete,” or “maximum” confidence unless dci_score is 0.99 or higher. It is normal for a meaningful share to be judgment or guesswork from this pass alone.)
+
+## How to get more
+(Exactly one or two sentences: refer to the full dossier and the engineering report by the titles given in the user message — not as filenames.)
+"""
+        user_msg = (
+            "Context JSON (for facts only; do not echo file paths from statements):\n"
+            f"{json.dumps(payload, default=str)[:14000]}\n\n"
+            "Dossier excerpt for tone/context only (do not copy technical citations into output):\n"
+            f"{dossier_excerpt[:5000]}\n\n"
+            "For 'How to get more': refer to the Program Totality Dossier and the engineer-facing structured report "
+            "by those plain titles — do not write .md filenames, paths, or URLs."
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.llm_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_completion_tokens=2048,
+            )
+            txt = (response.choices[0].message.content or "").strip()
+            if txt:
+                return txt
+        except Exception as e:
+            self.console.print(f"[yellow]ONEPAGER LLM failed, using fallback:[/yellow] {e}")
+        return render_onepager_cfo(evidence_pack, dependency_summary)
 
     def _build_deterministic_claims(self, howto: dict, file_index: List[str]) -> dict:
         claims = []
@@ -1431,10 +1854,12 @@ RULES:
         return "\n".join(lines)
 
     def save_json(self, filename: str, data: Any):
-        """Save JSON atomically using tmp file + rename."""
+        """Save JSON atomically using tmp file + rename (under the current run directory)."""
         import tempfile
-        
-        final_path = self.output_dir / filename
+
+        if self.run_dir is None:
+            raise RuntimeError("save_json requires run_dir; call only after Analyzer.run() initializes the run folder")
+        final_path = self.run_dir / filename
         # Create parent directory if needed
         final_path.parent.mkdir(parents=True, exist_ok=True)
         

@@ -1,5 +1,5 @@
 import { Argv } from 'yargs';
-import { monitorDrift } from '../src/claims/monitorDrift';
+import { monitorDrift } from "./claims/monitorDrift";
 
 export function registerMonitor(y: Argv) {
   y.command(

@@ -114,7 +114,9 @@ app.use((req, res, next) => {
   // Permissions-Policy - control browser features
   res.setHeader(
     "Permissions-Policy",
-    "geolocation=(), microphone=(), camera=()"
+    isProduction
+      ? "geolocation=(), microphone=(), camera=()"
+      : "geolocation=(), microphone=(self), camera=()"
   );
 
   next();

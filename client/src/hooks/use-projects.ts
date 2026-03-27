@@ -132,6 +132,7 @@ type CreateProjectInput = {
   name: string;
   /** Server accepts github | local | replit — use `github` for public GitHub repos */
   mode?: "github" | "local" | "replit";
+  reportAudience?: "pro" | "learner";
   apiKey: string;
 };
 
@@ -142,11 +143,11 @@ export function useCreateProject() {
 
   return useMutation({
     mutationFn: async (input: CreateProjectInput) => {
-      const { apiKey, mode = "github", url, name } = input;
+      const { apiKey, mode = "github", reportAudience = "pro", url, name } = input;
       const res = await fetch(api.projects.create.path, {
         method: api.projects.create.method,
         headers: { "Content-Type": "application/json", ...authHeaders(apiKey) },
-        body: JSON.stringify({ url, name, mode }),
+        body: JSON.stringify({ url, name, mode, reportAudience }),
       });
 
       if (!res.ok) {
@@ -186,6 +187,27 @@ export async function triggerProjectAnalysis(projectId: number, apiKey: string):
   if (!res.ok && res.status !== 202) throw new Error("Failed to start analysis");
 }
 
+/** Clone hosted git URL (e.g. Replit) server-side, then analyze the temp checkout. */
+export async function cloneAnalyzeProject(input: {
+  gitUrl: string;
+  name?: string;
+  apiKey: string;
+}): Promise<Project> {
+  const { apiKey, gitUrl, name } = input;
+  const res = await fetch(api.projects.cloneAnalyze.path, {
+    method: api.projects.cloneAnalyze.method,
+    headers: { "Content-Type": "application/json", ...authHeaders(apiKey) },
+    body: JSON.stringify({ gitUrl, name }),
+  });
+  if (res.status === 401) throw new Error("Invalid API key");
+  if (res.status === 400) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(typeof body.message === "string" ? body.message : "Invalid clone URL");
+  }
+  if (!res.ok) throw new Error("Failed to start clone analysis");
+  return api.projects.cloneAnalyze.responses[201].parse(await res.json());
+}
+
 export function useAnalyzeReplit() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -220,6 +242,47 @@ export function useAnalyzeReplit() {
 }
 
 // POST /api/projects/:id/analyze (Manual trigger if needed)
+export type ProjectRunListRow = {
+  id: number;
+  created_at: string | Date | null;
+  mode: string;
+  dci_score: number | null;
+  claim_count: number | null;
+  verified_count: number | null;
+  input_type: string;
+  model_used: string | null;
+  cache_hit: boolean;
+};
+
+export function useProjectRuns(projectId: number) {
+  const { apiKey } = useDebriefApiKey();
+  return useQuery({
+    queryKey: ["projectRuns", projectId, apiKey],
+    enabled: Number.isFinite(projectId) && projectId > 0 && !!apiKey,
+    queryFn: async (): Promise<ProjectRunListRow[]> => {
+      const res = await fetch(`/api/projects/${projectId}/runs`, { headers: authHeaders(apiKey) });
+      if (res.status === 401) throw new Error("Invalid API key");
+      if (!res.ok) throw new Error("Failed to load runs");
+      return (await res.json()) as ProjectRunListRow[];
+    },
+  });
+}
+
+export function useProjectRunDetail(projectId: number, runId: number | null) {
+  const { apiKey } = useDebriefApiKey();
+  return useQuery({
+    queryKey: ["projectRunDetail", projectId, runId, apiKey],
+    enabled: Number.isFinite(projectId) && projectId > 0 && !!runId && !!apiKey,
+    queryFn: async (): Promise<{ run: Record<string, unknown>; analysis: Analysis | null }> => {
+      const res = await fetch(`/api/projects/${projectId}/runs/${runId}`, { headers: authHeaders(apiKey) });
+      if (res.status === 401) throw new Error("Invalid API key");
+      if (res.status === 404) throw new Error("Run not found");
+      if (!res.ok) throw new Error("Failed to load run");
+      return res.json() as Promise<{ run: Record<string, unknown>; analysis: Analysis | null }>;
+    },
+  });
+}
+
 export function useTriggerAnalysis() {
   const { toast } = useToast();
   const queryClient = useQueryClient();

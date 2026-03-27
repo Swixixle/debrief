@@ -10,7 +10,7 @@ export function registerValidateDossier(y: Argv) {
       cmd.option("schema", {
         type: "string",
         describe: "Path to schema file",
-        default: "schemas/dossier_v2.schema.json",
+        default: "shared/schemas/dossier_v2.schema.json",
       }),
     async (args) => {
       const dossierPath = args.dossier as string;

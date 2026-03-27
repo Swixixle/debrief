@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 import json
+import re
 
 def render_onboarding_guide(pack: Dict[str, Any]) -> str:
     """
@@ -409,6 +410,172 @@ def _get_dci(pack: Dict[str, Any]) -> Dict[str, Any]:
 
 def _get_dci_v2(pack: Dict[str, Any]) -> Dict[str, Any]:
     return pack.get("metrics", {}).get("dci_v2_structural_visibility", {})
+
+
+def _strip_paths_for_cfo(text: str) -> str:
+    """Remove file-path-like segments so executive text stays path-free."""
+    t = text
+    t = re.sub(r"\s*\([^)]*(?:\.(?:toml|json|ya?ml|lock)|/)[^)]*\)", "", t)
+    t = re.sub(
+        r"\b[\w.-]+(?:/[\w.-]+)+\.(?:py|js|mjs|cjs|ts|tsx|jsx|go|rs|java|kt|rb|php|md|json|ya?ml|toml|html|css)\b",
+        "",
+        t,
+    )
+    t = re.sub(r"\s*,\s*,+", ", ", t)
+    t = re.sub(r",(\s*[.,;:])+", r"\1", t)
+    t = re.sub(r"\(\s*,", "(", t)
+    t = re.sub(r",\s*\)", ")", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    t = re.sub(r"[:;,]\s*$", "", t).strip()
+    if len(t) < 12:
+        return "Capability indicated by static review (details are in the technical dossier for specialists)."
+    return t
+
+
+def render_onepager_cfo(
+    pack: Dict[str, Any],
+    dependency_summary: Dict[str, Any] | None = None,
+) -> str:
+    """
+    Non-technical one-pager when LLM is unavailable: memo-style, no file paths or code.
+    """
+    dci = _get_dci(pack)
+    score = float(dci.get("score") or 0)
+    pct = int(round(100 * score))
+    verified = pack.get("summary", {}).get("verified_claims", 0)
+    total = pack.get("summary", {}).get("total_claims", 0) or 1
+    lines: list[str] = []
+    lines.append("# Executive brief")
+    lines.append("")
+    lines.append("## What this codebase is")
+    lines.append("")
+    opener_claims = (pack.get("verified") or {}).get("What the Target System Is")
+    opener = None
+    if isinstance(opener_claims, list):
+        for c in opener_claims[:3]:
+            st = (c.get("statement") or "").replace("`", "").strip()
+            cand = _strip_paths_for_cfo(st)
+            if cand.endswith(":"):
+                cand = cand[:-1].strip()
+            if len(cand) > 15:
+                opener = cand
+                break
+    if opener:
+        op_opening = opener[0].upper() + opener[1:] if opener[0].isalpha() else opener
+        if op_opening[-1] not in ".!?":
+            op_opening += "."
+        lines.append(
+            f"{op_opening} This memo summarizes what a read-only pass over the repository could support about scope, "
+            "dependencies, and risk themes—the application was not executed as part of this review."
+        )
+    else:
+        lines.append(
+            "This is an independently analyzed software asset. The note below summarizes "
+            "what static examination could credibly support about structure and operational posture—without running the system."
+        )
+    lines.append("")
+    lines.append("## What it does")
+    lines.append("")
+    caps: list[str] = []
+    seen_caps: set[str] = set()
+    for section, claims in (pack.get("verified") or {}).items():
+        if not isinstance(claims, list):
+            continue
+        for c in claims[:2]:
+            stmt = (c.get("statement") or "").strip()
+            if stmt and len(stmt) < 400:
+                plain = _strip_paths_for_cfo(stmt.replace("`", ""))
+                if plain.endswith(":"):
+                    plain = plain[:-1].strip()
+                if len(plain) < 18:
+                    continue
+                if plain and plain not in seen_caps:
+                    seen_caps.add(plain)
+                    caps.append(plain)
+        if len(caps) >= 6:
+            break
+    if opener:
+        okey = opener.lower()[:48]
+        caps = [c for c in caps if c.lower()[:48] != okey]
+    if len(caps) < 3:
+        fillers = [
+            "Ships automated tests and examples that imply intended behaviors (nothing was executed in this review).",
+            "Exposes a public package or service surface consistent with its declared ecosystem.",
+            "Documents setup and contributor workflows where present in repository metadata.",
+        ]
+        for f in fillers:
+            if f not in seen_caps and f not in caps:
+                caps.append(f)
+                if len(caps) >= 3:
+                    break
+    if not caps:
+        caps = [
+            "Provides the functionality described in project documentation (not executed in this review).",
+            "Declares third-party libraries typical for its stack.",
+            "Can be built or run using commands inferred from repository metadata where present.",
+        ]
+    for c in caps[:6]:
+        lines.append(f"- {c}")
+    lines.append("")
+    lines.append("## What it is NOT")
+    lines.append("")
+    lines.append("- Not a runtime assessment: behavior in production was not observed.")
+    lines.append("- Not a security certification: no penetration testing or threat modeling was performed.")
+    lines.append("- Not legal advice on licenses or compliance: dependency and license fields are informational only.")
+    lines.append("- Not a substitute for management representations or a full quality audit.")
+    lines.append("")
+    lines.append("## Risk flags")
+    lines.append("")
+    risks: list[str] = []
+    for u in (pack.get("unknowns") or [])[:12]:
+        if not isinstance(u, dict):
+            continue
+        if u.get("status") != "UNKNOWN":
+            continue
+        desc = (u.get("description") or u.get("notes") or "").strip()
+        cat = (u.get("category") or "").replace("_", " ").strip()
+        if desc:
+            plain = _strip_paths_for_cfo(desc) if re.search(
+                r"/|\.(?:py|js|ts)\b", desc
+            ) else desc
+            sentence = plain[:280].strip()
+            if sentence:
+                if sentence[0].isalpha():
+                    sentence = sentence[0].upper() + sentence[1:]
+                risks.append(sentence)
+        elif cat:
+            risks.append(
+                f"We could not verify {cat.lower()} from repository artifacts alone; specialists should confirm."
+            )
+        if len(risks) >= 5:
+            break
+    if dependency_summary and dependency_summary.get("flagged_cve_count", 0) > 0:
+        risks.insert(
+            0,
+            f"Dependency scan: {dependency_summary['flagged_cve_count']} direct package(s) matched known vulnerability records (OSV) at analysis time.",
+        )
+    if not risks:
+        risks.append("No high-priority unknowns were auto-flagged; review the full dossier for residual gaps.")
+    for r in risks[:5]:
+        lines.append(f"- {r}")
+    lines.append("")
+    lines.append("## Confidence level")
+    lines.append("")
+    lines.append(
+        f"The diligence coverage index for this run is **{pct}%**, meaning about **{verified} of {total}** "
+        "reviewed statements were backed by independently checkable evidence in source files—similar in spirit to "
+        '“what share of claims a buyer could re-verify without trusting the narrative alone.” '
+        "It is not a grade of product quality, security, or team competence—only of how much this specific pass could nail down."
+    )
+    lines.append("")
+    lines.append("## How to get more")
+    lines.append("")
+    lines.append(
+        "For counsel and technical specialists: use **DOSSIER.md** for the full evidence-based narrative and "
+        "**REPORT_ENGINEER.md** for the structured engineering report; **receipt.json** records integrity metadata for this run."
+    )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_engineer(pack: Dict[str, Any]) -> str:

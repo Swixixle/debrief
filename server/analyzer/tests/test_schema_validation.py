@@ -83,6 +83,21 @@ class TestSchemaValidation(unittest.TestCase):
         self.assertTrue(len(errors) > 0, "Should have validation errors for missing fields")
         self.assertTrue(any("schema_version" in e or "target" in e for e in errors))
 
+    def test_target_howto_unknown_object_with_confidence_validates(self):
+        """Model-emitted confidence on unknown entries is allowed by schema."""
+        with open(FIXTURES_DIR / "target_howto.sample.json", "r") as f:
+            data = json.load(f)
+        data["unknowns"] = [
+            {
+                "what_is_missing": "Test gap",
+                "why_it_matters": "Coverage",
+                "confidence": 0.25,
+            }
+        ]
+        errors = validate_target_howto_json(data)
+        if errors:
+            self.fail("unknowns with confidence should validate:\n" + "\n".join(errors))
+
     def test_operate_invalid_schema_version(self):
         """Test that invalid schema_version format is caught."""
         with open(FIXTURES_DIR / "operate.sample.json", "r") as f:

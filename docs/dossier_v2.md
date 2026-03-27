@@ -1,6 +1,6 @@
 # Repo Recon Dossier v2 Schema
 
-This document describes the structure and fields of Dossier v2, as specified in `schemas/dossier_v2.schema.json`.
+This document describes the structure and fields of Dossier v2, as specified in `shared/schemas/dossier_v2.schema.json`.
 
 ---
 

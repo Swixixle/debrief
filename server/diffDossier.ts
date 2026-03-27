@@ -1,5 +1,5 @@
 import { Argv } from 'yargs';
-import { diffDossier } from '../src/claims/diffDossier';
+import { diffDossier } from "./claims/diffDossier";
 
 export function registerDiffDossier(y: Argv) {
   y.command(

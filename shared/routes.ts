@@ -27,7 +27,8 @@ export const api = {
       method: 'POST' as const,
       path: '/api/projects' as const,
       input: insertProjectSchema.extend({
-        mode: z.enum(["github", "local", "replit"]).optional().default("github"),
+        mode: z.enum(["github", "local", "replit", "git_clone"]).optional().default("github"),
+        reportAudience: z.enum(["pro", "learner"]).optional().default("pro"),
       }),
       responses: {
         201: z.custom<typeof projects.$inferSelect>(),
@@ -64,6 +65,18 @@ export const api = {
       responses: {
         201: z.custom<typeof projects.$inferSelect>(),
         500: errorSchemas.internal,
+      },
+    },
+    cloneAnalyze: {
+      method: 'POST' as const,
+      path: '/api/projects/clone-analyze' as const,
+      input: z.object({
+        gitUrl: z.string().min(1, 'gitUrl is required'),
+        name: z.string().optional(),
+      }),
+      responses: {
+        201: z.custom<typeof projects.$inferSelect>(),
+        400: errorSchemas.validation,
       },
     },
   },

@@ -1,5 +1,5 @@
 import { Argv } from 'yargs';
-import { scanCoverage } from '../src/coverage/scanCoverage';
+import { scanCoverage } from "./coverage/scanCoverage";
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
