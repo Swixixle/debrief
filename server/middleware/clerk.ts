@@ -1,23 +1,21 @@
-import type { RequestHandler } from "express";
-import { clerkMiddleware, getAuth } from "@clerk/express";
+import type { Request, RequestHandler } from "express";
 
-export const clerkEnabled = !!process.env.CLERK_SECRET_KEY;
+/** Clerk is off until `CLERK_SECRET_KEY` (and publishable keys) are configured. */
+export const clerkEnabled = false;
 
-/** Soft auth — attaches Clerk session to request when configured. */
-export const withClerk: RequestHandler = clerkEnabled
-  ? clerkMiddleware()
-  : (_req, _res, next) => next();
-
-/** JSON API guard: 401 if not signed in (no redirect). */
-export const requireClerkSession: RequestHandler = (req, res, next) => {
-  if (!clerkEnabled) {
-    return res.status(503).json({ error: "Sign-in is not configured on this server." });
-  }
-  const auth = getAuth(req);
-  if (!auth.userId) {
-    return res.status(401).json({ error: "Sign in required." });
-  }
+export const withClerk: RequestHandler = (_req, _res, next) => {
   next();
 };
 
-export { getAuth };
+export const requireClerkSession: RequestHandler = (_req, _res, next) => {
+  next();
+};
+
+export const requireAuth: RequestHandler = (_req, _res, next) => {
+  next();
+};
+
+/** Stub while Clerk is disabled — no signed-in user. */
+export function getAuth(_req: Request): { userId: string | null } {
+  return { userId: null };
+}
