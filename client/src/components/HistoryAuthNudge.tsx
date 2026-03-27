@@ -1,8 +1,9 @@
 import { SignInButton, useAuth } from "@clerk/clerk-react";
+import { clerkPublishableKey } from "@/lib/clerkEnv";
 
 /** Nudge signed-out users to persist run history (requires Clerk). */
 export function HistoryAuthNudge({ show }: { show: boolean }) {
-  const pk = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+  const pk = clerkPublishableKey();
   if (!pk || !show) return null;
   return <HistoryAuthNudgeInner />;
 }

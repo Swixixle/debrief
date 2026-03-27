@@ -1,9 +1,10 @@
 import { SignInButton, SignedIn, SignedOut, UserButton } from "@clerk/clerk-react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
+import { clerkPublishableKey } from "@/lib/clerkEnv";
 
 export function ClerkNav({ isLight }: { isLight: boolean }) {
-  const pk = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+  const pk = clerkPublishableKey();
   if (!pk) return null;
 
   const btn = cn(

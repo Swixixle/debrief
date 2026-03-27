@@ -3,6 +3,7 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { useCredits } from "@/hooks/useCredits";
 import { useAuth } from "@clerk/clerk-react";
+import { clerkPublishableKey } from "@/lib/clerkEnv";
 
 type Product = {
   priceId: string;
@@ -13,8 +14,19 @@ type Product = {
 };
 
 export default function BillingPage() {
-  const { data: credits } = useCredits();
+  if (clerkPublishableKey()) {
+    return <BillingPageWithClerk />;
+  }
+  return <BillingPageBody isSignedIn={false} />;
+}
+
+function BillingPageWithClerk() {
   const { isSignedIn } = useAuth();
+  return <BillingPageBody isSignedIn={isSignedIn} />;
+}
+
+function BillingPageBody({ isSignedIn }: { isSignedIn: boolean }) {
+  const { data: credits } = useCredits();
 
   const { data: catalog } = useQuery({
     queryKey: ["/api/billing/products"],
@@ -127,3 +139,4 @@ export default function BillingPage() {
     </Layout>
   );
 }
+

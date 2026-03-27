@@ -28,6 +28,7 @@ import {
   SiNotion,
 } from "react-icons/si";
 import { Code2, Link2 } from "lucide-react";
+import { isClerkConfigured } from "@/lib/clerkEnv";
 
 type ApiKeyRow = {
   id: number;
@@ -77,7 +78,87 @@ function IntegrationCard({
   );
 }
 
-export default function SettingsPage() {
+function SettingsIntegrationsSection() {
+  return (
+    <section className="space-y-4">
+      <h2 className="text-lg font-semibold text-slate-900">Integrations</h2>
+      <div className="grid gap-4">
+        <IntegrationCard
+          name="GitHub Action"
+          description="Analyze your repo on every push. See docs/INTEGRATIONS.md in this repository for setup."
+          status="available"
+          icon={<SiGithub />}
+        />
+        <IntegrationCard
+          name="VS Code"
+          description="Right-click any folder to analyze."
+          status="coming-soon"
+          icon={<Code2 className="w-7 h-7" />}
+        />
+        <IntegrationCard
+          name="Slack"
+          description="Get reports in your channel."
+          status="coming-soon"
+          icon={<SiSlack />}
+        />
+        <IntegrationCard
+          name="Discord"
+          description="Bot slash command for your server."
+          status="coming-soon"
+          icon={<SiDiscord />}
+        />
+        <IntegrationCard
+          name="Notion"
+          description="Ingest is available from the app; workspace automation is expanding."
+          status="available"
+          icon={<SiNotion />}
+        />
+        <IntegrationCard
+          name="Zapier"
+          description="Connect Debrief to any workflow."
+          status="planned"
+          icon={<Link2 className="w-7 h-7" />}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SettingsWithoutClerk() {
+  return (
+    <Layout variant="light">
+      <div className="max-w-3xl mx-auto space-y-10 text-left">
+        <div>
+          <h1 className="text-3xl font-semibold text-slate-900">Settings</h1>
+          <p className="mt-2 text-slate-600">API keys, account, and integrations.</p>
+        </div>
+
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">API keys</h2>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-700">
+            <p className="font-medium text-slate-900">Sign-in is not configured</p>
+            <p className="mt-2">
+              This deployment has no Clerk publishable key. Add <code className="font-mono">VITE_CLERK_PUBLISHABLE_KEY</code> to
+              enable account-linked API keys, or use a <code className="font-mono">dk_…</code> key from an environment where
+              they were issued.
+            </p>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">Account</h2>
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm text-sm text-slate-700">
+            <p>Sign-in is not configured on this server.</p>
+          </div>
+        </section>
+
+        <SettingsIntegrationsSection />
+      </div>
+    </Layout>
+  );
+}
+
+function SettingsWithClerk() {
   const { isSignedIn, isLoaded } = useAuth();
   const { user } = useUser();
   const { data: credits } = useCredits();
@@ -240,47 +321,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">Integrations</h2>
-          <div className="grid gap-4">
-            <IntegrationCard
-              name="GitHub Action"
-              description="Analyze your repo on every push. See docs/INTEGRATIONS.md in this repository for setup."
-              status="available"
-              icon={<SiGithub />}
-            />
-            <IntegrationCard
-              name="VS Code"
-              description="Right-click any folder to analyze."
-              status="coming-soon"
-              icon={<Code2 className="w-7 h-7" />}
-            />
-            <IntegrationCard
-              name="Slack"
-              description="Get reports in your channel."
-              status="coming-soon"
-              icon={<SiSlack />}
-            />
-            <IntegrationCard
-              name="Discord"
-              description="Bot slash command for your server."
-              status="coming-soon"
-              icon={<SiDiscord />}
-            />
-            <IntegrationCard
-              name="Notion"
-              description="Ingest is available from the app; workspace automation is expanding."
-              status="available"
-              icon={<SiNotion />}
-            />
-            <IntegrationCard
-              name="Zapier"
-              description="Connect Debrief to any workflow."
-              status="planned"
-              icon={<Link2 className="w-7 h-7" />}
-            />
-          </div>
-        </section>
+        <SettingsIntegrationsSection />
 
         <Dialog open={!!newKey} onOpenChange={(o) => !o && setNewKey(null)}>
           <DialogContent>
@@ -308,4 +349,8 @@ export default function SettingsPage() {
       </div>
     </Layout>
   );
+}
+
+export default function SettingsPage() {
+  return isClerkConfigured() ? <SettingsWithClerk /> : <SettingsWithoutClerk />;
 }
