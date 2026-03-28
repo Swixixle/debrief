@@ -7,8 +7,9 @@
     "build": "ncc build src/index.ts -o dist --license licenses.txt --minify"
   },
   "dependencies": {
-    "@actions/core": "^1.11.1",
-    "@actions/github": "^6.0.0"
+    "@actions/core": "^3.0.0",
+    "@actions/github": "^9.0.0",
+    "@actions/http-client": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
