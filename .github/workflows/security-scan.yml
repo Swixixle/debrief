@@ -210,14 +210,14 @@ jobs:
     
     steps:
       - name: Download npm audit reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-audit-reports
           path: npm-audit-reports/
         continue-on-error: true
 
       - name: Download pip-audit reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pip-audit-reports
           path: pip-audit-reports/
