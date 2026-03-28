@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Upload npm audit reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: npm-audit-reports
@@ -125,7 +125,7 @@ jobs:
           fi
 
       - name: Upload pip-audit reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pip-audit-reports
