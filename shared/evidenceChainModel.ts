@@ -151,21 +151,24 @@ function educationExtras(
     analyzer: {
       role:
         "Runs Debrief’s PTA analyzer over a workspace copy — dependency and CVE scans, API surface extraction, and scoring before anything is signed.",
-      technology: "Python analyzer (program-totality-analyzer) plus Node/Postgres orchestration in this debrief app",
+      technology:
+        "A Python program that reads every file in your repo, maps dependencies, checks for known vulnerabilities, and scores complexity — then hands results to the Node.js server to store",
       fileRef: "program-totality-analyzer/ and server/runProjectAnalysis.ts (orchestration)",
       alternativeTechnologies: ["Hosted SAST only (no local clone)", "Manual security review", "CI-only static checks without a receipt"],
     },
     "receipt-creation": {
       role:
         "Builds a receipt — a signed JSON fingerprint of what the analyzer saw — so results can be hashed and chained.",
-      technology: "JSON receipt artifact + optional Ed25519 / HMAC signing (DEBRIEF_CHAIN_* env)",
+      technology:
+        "A JSON file summarizing what the analyzer found, optionally signed with Ed25519 (a cryptographic algorithm that proves the file hasn't been altered since it was created)",
       fileRef: "server/receiptChainFinalize.ts and receipt.json in each run directory",
       alternativeTechnologies: ["Unsigned logs only", "PDF-only audit trail", "External SBOM service"],
     },
     "chain-link": {
       role:
         "Verifies each new receipt references the previous hash correctly so the timeline cannot be silently rewritten.",
-      technology: "Postgres receipt_chain rows + SHA-256 over canonical JSON",
+      technology:
+        "Each receipt gets a unique fingerprint (SHA-256 hash) computed from its contents. The next receipt records that fingerprint, creating a chain where any tampering is immediately visible",
       fileRef: "shared/schema.ts (receipt_chain) and server/chain/verifyChainRows.ts",
       alternativeTechnologies: [
         "Blockchain timestamping",
@@ -183,7 +186,8 @@ function educationExtras(
     "chain-export": {
       role:
         "Packages the verified chain for download so legal or compliance can check signatures offline.",
-      technology: "Signed JSON bundle (optional PEM key in env)",
+      technology:
+        "A downloadable file containing your full receipt history, optionally signed so a third party (lawyer, auditor, buyer) can verify it without needing to trust you",
       fileRef: "server/routes/targets-chain.ts — GET …/chain/export",
       alternativeTechnologies: ["Notary services", "In-app verification only", "Paper binders with screenshots"],
     },
