@@ -9,14 +9,16 @@ function resolveDistPublic(): string {
   if (fromEnv) {
     return path.resolve(fromEnv);
   }
-  const fromCwd = path.resolve(process.cwd(), "dist", "public");
+  // Production runs `node dist/index.cjs`; `__dirname` is `dist/`, so `public` is `dist/public`.
+  // Prefer that over cwd-relative paths: PaaS/Docker may set `process.cwd()` to something other than `/app`.
   const fromBundle = path.resolve(__dirname, "public");
-  for (const candidate of [fromCwd, fromBundle]) {
+  const fromCwd = path.resolve(process.cwd(), "dist", "public");
+  for (const candidate of [fromBundle, fromCwd]) {
     if (fs.existsSync(path.join(candidate, "index.html"))) {
       return candidate;
     }
   }
-  return fromCwd;
+  return fromBundle;
 }
 
 export function serveStatic(app: Express) {
