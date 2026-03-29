@@ -73,6 +73,89 @@ export interface CognitiveEdge {
   pulseOrder: number;
 }
 
+export interface HistoryStage {
+  nodeId: string;
+  constructionOrder: number;
+  stageName: string;
+  stageRole: string;
+  whyFirst: string;
+  whatBreaksWithout: string;
+  organismMetaphor: string;
+}
+
+const EDUCATION_HISTORY_STAGES: HistoryStage[] = [
+  {
+    nodeId: "target",
+    constructionOrder: 1,
+    stageName: "The question",
+    stageRole:
+      "Before any code existed, someone decided what this system measures.",
+    whyFirst:
+      'You cannot build an engine until you know what it processes. The repo URL is the question the whole system was built to answer: "what is in this codebase right now?" Everything else exists to serve that question.',
+    whatBreaksWithout:
+      "Without a clear input definition, the analyzer has nothing to normalize against. Every downstream step — receipts, chains, alerts — would have no anchor.",
+    organismMetaphor: "The first cell. Just a membrane and a question about the environment outside it.",
+  },
+  {
+    nodeId: "analyzer",
+    constructionOrder: 2,
+    stageName: "The first engine",
+    stageRole: "The first thing that actually ran. No interface, no database, no chain. Just input → output.",
+    whyFirst:
+      "The analyzer existed before the API, before the UI, before anything else. You could run it with a file path and it produced JSON. That is the whole system at this stage — a script that reads code and writes findings.",
+    whatBreaksWithout:
+      "Everything. The analyzer is the only part that actually reads the codebase. All receipts, all chains, all education content are downstream of what it finds.",
+    organismMetaphor: "Metabolism. The core chemical reaction that everything else will eventually depend on.",
+  },
+  {
+    nodeId: "receipt-creation",
+    constructionOrder: 3,
+    stageName: "The first memory",
+    stageRole: "Once the engine works, you need to remember what it found. The receipt is the moment output becomes record.",
+    whyFirst:
+      "A system that runs but does not remember is a calculator. The receipt is what turns Debrief from a scanner into a record-keeper. It adds no new analysis capability — it adds persistence and proof.",
+    whatBreaksWithout:
+      "Without receipts, every run is ephemeral. You could not prove what the codebase contained at any moment. The chain, the export, the buyer handoff — all impossible.",
+    organismMetaphor:
+      "DNA. The mechanism for recording what happened so it can be read later, by something that was not there when it happened.",
+  },
+  {
+    nodeId: "chain-link",
+    constructionOrder: 4,
+    stageName: "The proof of continuity",
+    stageRole: "One receipt proves a moment. A chain proves a timeline. This is the step that makes history tamper-evident.",
+    whyFirst:
+      "A single signed receipt can be forged if you control the signing key. A chain cannot be quietly altered — changing one receipt breaks every hash that follows it. The chain link is what makes the record trustworthy to someone who was not there for any of it.",
+    whatBreaksWithout:
+      "Without chain linking, each receipt is an island. You can prove what the code looked like at a moment but not that the moments between are unbroken. The audit trail becomes a collection of snapshots rather than a continuous record.",
+    organismMetaphor:
+      "The nervous system learning to sequence memory. Individual neurons fire (receipts), but the chain is what turns firing into a coherent timeline.",
+  },
+  {
+    nodeId: "receipt-stored",
+    constructionOrder: 5,
+    stageName: "The ledger",
+    stageRole: "The database row that makes the chain queryable, auditable, and survivable across restarts.",
+    whyFirst:
+      "Filesystem receipts can be lost, moved, or corrupted. The database row is the canonical record. It also makes the chain queryable — you can ask \"show me every run where a CVE appeared\" without reading hundreds of JSON files.",
+    whatBreaksWithout:
+      "Without persistent storage the chain exists only on disk and only until the next deploy. The compliance story, the buyer handoff, the anomaly history — all depend on these rows surviving.",
+    organismMetaphor: "Long-term memory. The organism stops reacting to immediate stimuli and starts learning from its history.",
+  },
+  {
+    nodeId: "chain-export",
+    constructionOrder: 6,
+    stageName: "The handoff mechanism",
+    stageRole: "The point where the system stops talking to itself and starts talking to the outside world.",
+    whyFirst:
+      "A chain that only the system can read is useful internally but not verifiable externally. The export is what makes the record legible to someone who does not have access to your database — a lawyer, a buyer, an auditor.",
+    whatBreaksWithout:
+      'Without export, Debrief is a black box. You can say "we ran analysis" but you cannot prove it to anyone outside the system. The signed bundle is the thing you hand over.',
+    organismMetaphor:
+      "The organism developing the ability to communicate beyond its own membrane. Symbiosis becomes possible.",
+  },
+];
+
 export interface EvidenceChainModel {
   runId: string;
   targetName: string;
@@ -95,6 +178,8 @@ export interface EvidenceChainModel {
   logicalDependencyOrder: string[];
   /** Environment / secret health for education UI (server-filled) */
   keyStatuses: KeyStatus[];
+  /** Construction narrative for “How it grew” education mode */
+  historyStages: HistoryStage[];
 }
 
 /** Minimal row shape for pure builder + tests (matches DB receipt_chain columns we need). */
@@ -387,6 +472,7 @@ export function buildEvidenceChainModel(input: {
         },
       ],
       keyStatuses,
+      historyStages: EDUCATION_HISTORY_STAGES,
     });
   }
 
@@ -605,5 +691,6 @@ export function buildEvidenceChainModel(input: {
     nodes,
     edges,
     keyStatuses,
+    historyStages: EDUCATION_HISTORY_STAGES,
   });
 }

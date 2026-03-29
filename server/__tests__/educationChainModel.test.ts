@@ -172,6 +172,32 @@ describe("buildEvidenceChainModel", () => {
     expect(model.edges).toHaveLength(1);
   });
 
+  it("includes historyStages for education “How it grew” mode", () => {
+    const model = buildEvidenceChainModel({
+      runId: 5,
+      projectId: 1,
+      projectName: "solo",
+      projectUrl: "https://github.com/x/solo",
+      chainTargetId: null,
+      receipts: [],
+      verification: {
+        chainIntact: true,
+        brokenAtSequence: null,
+        gapsCount: 0,
+        anomaliesCount: 0,
+      },
+      analyzerCompleted: true,
+      analyzerFailed: false,
+      receiptForRun: null,
+      exportSigningConfigured: false,
+      usesAnalyzerJobQueue: false,
+      minimal: true,
+    });
+    expect(model.historyStages).toHaveLength(6);
+    expect(model.historyStages[0].nodeId).toBe("target");
+    expect(model.historyStages[5].nodeId).toBe("chain-export");
+  });
+
   it("includes buildHistory and logicalDependencyOrder from finalizeEvidenceModel", () => {
     const model = buildEvidenceChainModel({
       runId: 5,

@@ -5,4 +5,5 @@ export type {
   CognitiveNode,
   CognitiveEdge,
   EvidenceChainModel,
+  HistoryStage,
 } from "@shared/evidenceChainModel";

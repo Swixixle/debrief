@@ -37,6 +37,15 @@ export function DownTriangleNode({ data }: NodeProps<{ data: DownTriangleNodeDat
       className="relative flex flex-col items-center"
       style={{ opacity: Math.max(0.15, data.nodeOpacity) }}
     >
+      {data.historyBadgeOrder != null ? (
+        <span
+          className="absolute z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-900/15 bg-white px-1 text-[10px] font-semibold text-slate-800 shadow-sm"
+          style={{ top: -2, right: 10 }}
+          aria-hidden
+        >
+          {data.historyBadgeOrder}
+        </span>
+      ) : null}
       <Handle type="target" position={Position.Top} className="!opacity-0 !w-2 !h-2" />
       <div
         className={cn("relative", gap && "animate-[edu-gap-pulse-loop_2s_ease-in-out_infinite]")}

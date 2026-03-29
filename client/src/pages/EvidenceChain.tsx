@@ -15,7 +15,8 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { CognitiveNode, EvidenceChainModel, KeyStatus } from "@shared/evidenceChainModel";
+import type { CognitiveNode, EvidenceChainModel, HistoryStage, KeyStatus } from "@shared/evidenceChainModel";
+import { HistoryDetailPanel } from "@/components/education/HistoryDetailPanel";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -111,33 +112,48 @@ type CognitiveFlowData = {
   chainLinkHold?: boolean;
   gapFlash?: boolean;
   alternativeTechnologies: string[];
+  historyBadgeOrder?: number;
 };
+
+type EducationMode = "pipeline" | "history";
 
 function buildFlowElements(
   model: EvidenceChainModel,
   prog: number,
   walkthroughDone: boolean,
   gapFlash: boolean,
+  educationMode: EducationMode,
+  historyIntroStep: number,
 ): { nodes: Node<CognitiveFlowData>[]; edges: Edge[] } {
-  const nodesIn: Node<CognitiveFlowData>[] = model.nodes.map((n) => ({
-    id: n.id,
-    type: shapeToNodeType(n.shape),
-    position: { x: 0, y: 0 },
-    data: {
-      cognitive: n,
-      label: n.label,
-      sublabel: n.sublabel,
-      state: n.state,
-      criticality: n.criticality,
-      isActive: false,
-      isPulsing: false,
-      nodeOpacity: 1,
-      nodeId: n.id,
-      chainLinkHold: false,
-      gapFlash: false,
-      alternativeTechnologies: n.alternativeTechnologies ?? [],
-    },
-  }));
+  const stages = model.historyStages ?? [];
+  const historyById = new Map(stages.map((h) => [h.nodeId, h]));
+  const sortedPulseIds = [...model.nodes].sort((a, b) => a.pulseOrder - b.pulseOrder).map((n) => n.id);
+
+  const nodesIn: Node<CognitiveFlowData>[] = model.nodes.map((n) => {
+    const hist = historyById.get(n.id);
+    const label = educationMode === "history" && hist ? hist.stageName : n.label;
+    const historyBadgeOrder = educationMode === "history" && hist ? hist.constructionOrder : undefined;
+    return {
+      id: n.id,
+      type: shapeToNodeType(n.shape),
+      position: { x: 0, y: 0 },
+      data: {
+        cognitive: n,
+        label,
+        sublabel: n.sublabel,
+        state: n.state,
+        criticality: n.criticality,
+        isActive: false,
+        isPulsing: false,
+        nodeOpacity: 1,
+        nodeId: n.id,
+        chainLinkHold: false,
+        gapFlash: false,
+        alternativeTechnologies: n.alternativeTechnologies ?? [],
+        historyBadgeOrder,
+      },
+    };
+  });
 
   const edgesIn: Edge[] = model.edges.map((e) => ({
     id: e.id,
@@ -153,6 +169,41 @@ function buildFlowElements(
       edgeOpacity: 0.6,
     } satisfies CognitiveEdgeData,
   }));
+
+  if (educationMode === "history") {
+    const pulseId =
+      historyIntroStep >= 0 && historyIntroStep < sortedPulseIds.length
+        ? sortedPulseIds[historyIntroStep]
+        : null;
+
+    const nodes: Node<CognitiveFlowData>[] = nodesIn.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        nodeOpacity: 1,
+        chainLinkHold: false,
+        gapFlash: false,
+        isPulsing: pulseId === node.id,
+        isActive: true,
+      },
+    }));
+
+    const edges: Edge[] = edgesIn.map((edge) => {
+      const src = model.nodes.find((n) => n.id === edge.source);
+      const stroke = src ? eduStateColor[src.state] : "var(--edu-gray)";
+      return {
+        ...edge,
+        data: {
+          ...(edge.data as CognitiveEdgeData),
+          strokeColor: stroke,
+          animated: false,
+          edgeOpacity: 0.6,
+        } satisfies CognitiveEdgeData,
+      };
+    });
+
+    return { nodes: layoutWithDagre(nodes, edges), edges };
+  }
 
   const revealThreshold = (id: string) => NODE_REVEAL[id] ?? 0;
   const chainHold = prog >= 600 && prog < 750 && !walkthroughDone;
@@ -218,20 +269,24 @@ function FlowCanvas({
   onSelect,
   replayNonce,
   highlightIds,
+  educationMode,
 }: {
   model: EvidenceChainModel;
   onSelect: (n: CognitiveNode | null) => void;
   replayNonce: number;
   highlightIds: string[] | null;
+  educationMode: EducationMode;
 }) {
   const { fitView } = useReactFlow();
   const [prog, setProg] = useState(-1);
   const [done, setDone] = useState(false);
   const [gapFlash, setGapFlash] = useState(false);
+  const [historyIntroStep, setHistoryIntroStep] = useState(-1);
   const gapFlashTriggered = useRef(false);
   const rafRef = useRef(0);
 
   useEffect(() => {
+    if (educationMode !== "pipeline") return;
     gapFlashTriggered.current = false;
     setDone(false);
     setProg(-1);
@@ -264,11 +319,43 @@ function FlowCanvas({
     };
     rafRef.current = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [model, replayNonce]);
+  }, [model, replayNonce, educationMode]);
+
+  useEffect(() => {
+    if (educationMode !== "history") {
+      setHistoryIntroStep(-1);
+      return;
+    }
+    const sorted = [...model.nodes].sort((a, b) => a.pulseOrder - b.pulseOrder).map((n) => n.id);
+    if (sorted.length === 0) {
+      setHistoryIntroStep(-1);
+      return;
+    }
+    setHistoryIntroStep(0);
+    let step = 0;
+    const tick = window.setInterval(() => {
+      step += 1;
+      if (step >= sorted.length) {
+        setHistoryIntroStep(-1);
+        clearInterval(tick);
+        return;
+      }
+      setHistoryIntroStep(step);
+    }, 600);
+    return () => clearInterval(tick);
+  }, [educationMode, replayNonce, model.nodes]);
 
   const { nodes: laidOutNodes, edges: flowEdges } = useMemo(
-    () => buildFlowElements(model, prog, done, gapFlash),
-    [model, prog, done, gapFlash],
+    () =>
+      buildFlowElements(
+        model,
+        prog,
+        done,
+        gapFlash,
+        educationMode,
+        historyIntroStep,
+      ),
+    [model, prog, done, gapFlash, educationMode, historyIntroStep],
   );
 
   const { nodes: highlightedNodes, edges: highlightedEdges } = useMemo(() => {
@@ -308,7 +395,7 @@ function FlowCanvas({
   useEffect(() => {
     const t = window.setTimeout(() => fitView({ padding: 0.2, duration: 200 }), 80);
     return () => clearTimeout(t);
-  }, [fitView, model, replayNonce, done]);
+  }, [fitView, model, replayNonce, done, educationMode, historyIntroStep]);
 
   const onNodeClick = useCallback(
     (_: MouseEvent, node: Node<CognitiveFlowData>) => {
@@ -458,6 +545,7 @@ export default function EvidenceChainPage() {
   const [timelineHighlightIds, setTimelineHighlightIds] = useState<string[] | null>(null);
   const [timelineCardKey, setTimelineCardKey] = useState<string | null>(null);
   const [showLogicalOnly, setShowLogicalOnly] = useState(false);
+  const [educationMode, setEducationMode] = useState<EducationMode>("pipeline");
 
   useEffect(() => {
     if (!runId || isNaN(runId)) {
@@ -620,15 +708,72 @@ export default function EvidenceChainPage() {
             </Button>
           </div>
         </div>
-        <div className="h-full w-full pt-14">
+        <div className="h-full w-full pt-14 flex flex-col min-h-0">
           {canvasView === "works" ? (
-            <FlowCanvasOrProvider
-              key={replayNonce}
-              model={model}
-              onSelect={setSelected}
-              replayNonce={replayNonce}
-              highlightIds={timelineHighlightIds}
-            />
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 0,
+                  border: "0.5px solid var(--color-border-secondary)",
+                  borderRadius: "var(--border-radius-md)",
+                  overflow: "hidden",
+                  width: "fit-content",
+                  margin: "12px 16px",
+                }}
+              >
+                {(["pipeline", "history"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setEducationMode(mode);
+                      setSelected(null);
+                    }}
+                    style={{
+                      padding: "6px 16px",
+                      fontSize: 12,
+                      fontWeight: educationMode === mode ? 500 : 400,
+                      background:
+                        educationMode === mode
+                          ? "var(--color-text-primary)"
+                          : "var(--color-background-primary)",
+                      color:
+                        educationMode === mode
+                          ? "var(--color-background-primary)"
+                          : "var(--color-text-secondary)",
+                      border: "none",
+                      cursor: "pointer",
+                      transition: "all .15s",
+                    }}
+                  >
+                    {mode === "pipeline" ? "What it does" : "How it grew"}
+                  </button>
+                ))}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-text-tertiary)",
+                  padding: "0 16px 8px",
+                  lineHeight: 1.5,
+                }}
+              >
+                {educationMode === "pipeline"
+                  ? "What each part of the system does and how it connects to the next."
+                  : "The order in which these pieces had to exist — and why complexity accumulates the way it does."}
+              </div>
+              <div className="flex-1 min-h-0 relative">
+                <FlowCanvasOrProvider
+                  key={`${replayNonce}-${educationMode}`}
+                  model={model}
+                  onSelect={setSelected}
+                  replayNonce={replayNonce}
+                  highlightIds={timelineHighlightIds}
+                  educationMode={educationMode}
+                />
+              </div>
+            </>
           ) : (
             <BuildTimelineView
               model={model}
@@ -649,6 +794,8 @@ export default function EvidenceChainPage() {
         runId={model.runId}
         apiKey={apiKey}
         keyStatuses={model.keyStatuses}
+        educationMode={educationMode}
+        historyStages={model.historyStages ?? []}
       />
     </div>
   );
@@ -659,6 +806,7 @@ function FlowCanvasOrProvider(props: {
   onSelect: (n: CognitiveNode | null) => void;
   replayNonce: number;
   highlightIds: string[] | null;
+  educationMode: EducationMode;
 }) {
   return (
     <ReactFlowProvider>
@@ -685,12 +833,20 @@ function DetailPanel({
   runId,
   apiKey,
   keyStatuses,
+  educationMode,
+  historyStages,
 }: {
   selected: CognitiveNode | null;
   runId: string;
   apiKey: string | null;
   keyStatuses: KeyStatus[];
+  educationMode: EducationMode;
+  historyStages: HistoryStage[];
 }) {
+  const historyStageForSelection =
+    educationMode === "history" && selected
+      ? (historyStages.find((s) => s.nodeId === selected.id) ?? null)
+      : null;
   const [recMode, setRecMode] = useState<ReceptionistMode>("explain");
   const [recTexts, setRecTexts] = useState<Partial<Record<ReceptionistMode, string>>>({});
   const [recLoading, setRecLoading] = useState<ReceptionistMode | null>(null);
@@ -713,7 +869,7 @@ function DetailPanel({
   const canReceptionist = Boolean(apiKey) || isOpenWeb;
 
   useEffect(() => {
-    if (!selected || !canReceptionist) return;
+    if (!selected || !canReceptionist || educationMode === "history") return;
     let cancelled = false;
     setStrategiesLoading(true);
     (async () => {
@@ -742,13 +898,13 @@ function DetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, runId, canReceptionist, apiKey]);
+  }, [selected?.id, runId, canReceptionist, apiKey, educationMode]);
 
   const recTextsRef = useRef(recTexts);
   recTextsRef.current = recTexts;
 
   useEffect(() => {
-    if (!selected || !canReceptionist) return;
+    if (!selected || !canReceptionist || educationMode === "history") return;
     const mode = recMode;
     if (recTextsRef.current[mode]) return;
 
@@ -791,11 +947,15 @@ function DetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, recMode, runId, canReceptionist, apiKey]);
+  }, [selected?.id, recMode, runId, canReceptionist, apiKey, educationMode]);
 
   return (
     <div className="flex-[3] min-h-[260px] max-h-[380px] border-t border-slate-200 bg-white shadow-[0_-4px_24px_rgba(15,23,42,0.06)] flex flex-col">
-      {!selected ? (
+      {!selected && educationMode === "history" ? (
+        <div className="flex-1 overflow-y-auto">
+          <HistoryDetailPanel stage={null} totalStages={historyStages.length || 6} />
+        </div>
+      ) : !selected ? (
         <div className="flex-1 flex items-center justify-center text-slate-500 text-base px-6 text-center">
           Click any component to understand what it does
         </div>
@@ -804,7 +964,11 @@ function DetailPanel({
           <div className="md:col-span-3 space-y-2 min-w-0">
             <div className="flex items-center gap-2 text-slate-900 font-semibold">
               <ShapeHint shape={selected.shape} />
-              <span>{selected.label}</span>
+              <span>
+                {educationMode === "history" && historyStageForSelection
+                  ? historyStageForSelection.stageName
+                  : selected.label}
+              </span>
             </div>
             <p className="text-xs text-slate-500">
               {selected.shape === "circle"
@@ -820,7 +984,12 @@ function DetailPanel({
           </div>
 
           <div className="md:col-span-6 border-t md:border-t-0 md:border-l border-slate-200 pt-3 md:pt-0 md:pl-4 min-w-0 flex flex-col gap-3">
-            {!canReceptionist ? (
+            {educationMode === "history" ? (
+              <HistoryDetailPanel
+                stage={historyStageForSelection}
+                totalStages={historyStages.length || 6}
+              />
+            ) : !canReceptionist ? (
               <p className="text-sm text-amber-800">Add an API key to use the guide.</p>
             ) : (
               <>

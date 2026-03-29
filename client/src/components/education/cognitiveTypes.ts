@@ -16,6 +16,8 @@ export interface CognitiveNodeProps {
   gapFlash?: boolean;
   /** Hover popover (industry alternatives); max 3 shown in UI */
   alternativeTechnologies: string[];
+  /** “How it grew” mode: construction-order badge on the shape */
+  historyBadgeOrder?: number;
 }
 
 export const eduStateColor: Record<NodeState, string> = {

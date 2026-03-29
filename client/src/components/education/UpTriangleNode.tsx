@@ -47,6 +47,15 @@ export function UpTriangleNode({ data }: NodeProps<{ data: UpTriangleNodeData }>
           : undefined
       }
     >
+      {data.historyBadgeOrder != null ? (
+        <span
+          className="absolute z-10 flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-900/15 bg-white px-1 text-[10px] font-semibold text-slate-800 shadow-sm"
+          style={{ top: -2, right: 10 }}
+          aria-hidden
+        >
+          {data.historyBadgeOrder}
+        </span>
+      ) : null}
       <Handle type="target" position={Position.Top} className="!opacity-0 !w-2 !h-2" />
       <svg width={88} height={72} className="overflow-visible">
         {ring}
