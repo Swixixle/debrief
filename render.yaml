@@ -66,6 +66,7 @@ services:
     name: debrief-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
 databases:
   - name: debrief-db
