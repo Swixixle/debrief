@@ -92,6 +92,8 @@ Inspect `chain_intact`, `broken_at_sequence`, `broken_reason`, `signature_failur
 2. **Environment:** `NODE_ENV=production`, `DATABASE_URL`, required secrets, `ALLOWED_ORIGINS` if browser and API differ.
 3. **Worker:** If using BullMQ, ensure a **second** Render service (or dyno) runs the worker entry with `REDIS_URL` and worker env flags.
 
+4. **Key auto-generation:** `ensureSigningKeys()` and `ensureAccessKeys()` run only in the API process (`dist/index.cjs`), not the worker (`dist/worker.cjs`). In production, always set `DEBRIEF_CHAIN_SIGNING_PRIVATE_KEY`, `DEBRIEF_CHAIN_SIGNING_PUBLIC_KEY`, `API_KEY`, and `ADMIN_KEY` explicitly in your platform environment (Render env group: **debrief-secrets**). Do not rely on auto-generation in the worker process.
+
 ---
 
 ## 3. Logs and levels
