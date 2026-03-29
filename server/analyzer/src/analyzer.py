@@ -567,10 +567,73 @@ class Analyzer:
 
                 run_stage("learner_report", learner_report_stage, ctx)
 
+            if demo:
+                self._write_demo_outputs(run_dir, known_unknowns, dossier_final or "", evidence_pack)
+
             _safe_print("[bold green]All outputs written.[/bold green]")
         except Exception:
             (run_dir / "FAILED").write_text("Analyzer run failed. See logs above.\n", encoding="utf-8")
             raise
+
+    def _write_demo_outputs(
+        self,
+        run_dir: Path,
+        known_unknowns: List[Dict[str, Any]],
+        dossier_final: str,
+        evidence_pack: Dict[str, Any],
+    ) -> None:
+        """Write DEMO_DOSSIER.md and DEMO_SUMMARY.json for education / product demos."""
+        summary = evidence_pack.get("summary") or {}
+        exec_bullets: List[Dict[str, str]] = [
+            {
+                "text": (
+                    f"Files scanned: {summary.get('total_files', 0)}; "
+                    f"claims: {summary.get('total_claims', 0)}."
+                )[:120],
+            },
+            {
+                "text": (
+                    f"Verified claims: {summary.get('verified_claims', 0)}; "
+                    f"open unknowns: {summary.get('unknown_categories', 0)}."
+                )[:120],
+            },
+            {
+                "text": (
+                    "Demo view: same analysis as a full run, with a shortened dossier and UI-ready summary."
+                )[:120],
+            },
+        ]
+        snap: List[Dict[str, str]] = []
+        for u in known_unknowns:
+            if not isinstance(u, dict):
+                continue
+            st = u.get("status")
+            if st == "VERIFIED":
+                snap.append({"status": "VERIFIED", "label": str(u.get("category") or "verified")[:100]})
+            elif st == "UNKNOWN":
+                snap.append({"status": "UNKNOWN", "label": str(u.get("category") or "unknown")[:100]})
+        snap.append({"status": "INFERRED", "label": "Readiness signals inferred from repo metadata (demo)."})
+        if not any(x.get("status") == "VERIFIED" for x in snap):
+            snap.insert(0, {"status": "VERIFIED", "label": "Structural evidence from repository files."})
+        if not any(x.get("status") == "UNKNOWN" for x in snap):
+            snap.insert(0, {"status": "UNKNOWN", "label": "Gaps not fully evidenced in this pass."})
+
+        demo_summary: Dict[str, Any] = {
+            "sections": {
+                "executive_summary": exec_bullets[:6],
+                "evidence_snapshot": snap[:24],
+            }
+        }
+        (run_dir / "DEMO_SUMMARY.json").write_text(
+            json.dumps(demo_summary, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        body = (dossier_final or "").strip()
+        if len(body) > 8000:
+            body = body[:8000] + "\n\n_(Truncated for demo view.)_\n"
+        (run_dir / "DEMO_DOSSIER.md").write_text(f"# Demo dossier\n\n{body}\n", encoding="utf-8")
+        self.console.print("  [cyan]DEMO_DOSSIER.md + DEMO_SUMMARY.json[/cyan]")
 
     def index_files(self) -> List[str]:
         skip_dirs = {".git", "node_modules", "__pycache__", ".pythonlibs", ".cache",
