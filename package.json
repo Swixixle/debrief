@@ -75,7 +75,7 @@
     "drizzle-zod": "^0.8.3",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.0.1",
-    "express-rate-limit": "^8.3.1",
+    "express-rate-limit": "^8.3.2",
     "express-session": "^1.18.1",
     "extract-zip": "^2.0.1",
     "framer-motion": "^11.18.2",
