@@ -12,8 +12,8 @@
     "@actions/http-client": "^4.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^25.5.0",
     "@vercel/ncc": "^0.38.3",
-    "typescript": "^5.7.2"
+    "typescript": "^6.0.2"
   }
 }
