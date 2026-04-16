@@ -29,4 +29,4 @@ debrief = "server.analyzer.src.analyzer_cli:app"
 pta = "server.analyzer.src.analyzer_cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.14"]
+dev = ["pytest>=9.0", "pytest-mock>=3.14"]
