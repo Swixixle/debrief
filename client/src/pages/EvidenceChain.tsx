@@ -613,7 +613,9 @@ export default function EvidenceChainPage() {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center">
         <div>
-          <p className="text-slate-600 mb-4">Add your API key from the home page to open Education Mode.</p>
+          <p className="text-slate-600 mb-4">
+            Add your API key from Analyze (home), or use an open session, to view how this debrief was produced.
+          </p>
           <Link href="/">
             <Button>Go home</Button>
           </Link>
@@ -635,7 +637,7 @@ export default function EvidenceChainPage() {
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
         <p className="text-red-600">{error || "Unknown error"}</p>
         <Link href="/projects">
-          <Button variant="outline">Back to archives</Button>
+          <Button variant="outline">Back to library</Button>
         </Link>
       </div>
     );
@@ -990,7 +992,7 @@ function DetailPanel({
                 totalStages={historyStages.length || 6}
               />
             ) : !canReceptionist ? (
-              <p className="text-sm text-amber-800">Add an API key to use the guide.</p>
+              <p className="text-sm text-amber-800">Add an API key from Analyze, or use an open session, to use the guide.</p>
             ) : (
               <>
                 <Tabs value={recMode} onValueChange={(v) => setRecMode(v as ReceptionistMode)}>

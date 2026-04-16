@@ -68,7 +68,7 @@ function RunHistoryPanel({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-xs p-6 mb-6 space-y-4">
-      <h3 className="text-lg font-semibold text-slate-900">History</h3>
+      <h3 className="text-lg font-semibold text-slate-900">Run history</h3>
 
       <HistoryAuthNudge show={runs.length >= 2} />
 
@@ -379,8 +379,8 @@ function ApiSurfacePanel({ surface }: { surface: ApiSurfaceJson | null | undefin
   if (!surface || rows.length === 0) {
     return (
       <p className="text-slate-600 text-sm">
-        No API surface snapshot was stored for this analysis. Re-run the analyzer with the latest PTA build to populate
-        static route extraction.
+        No API surface snapshot was stored for this analysis. Re-run Debrief with the latest analyzer to populate static
+        route extraction.
       </p>
     );
   }
@@ -673,27 +673,17 @@ export function DebriefReport({
 
   const proArticle = (
     <article className="bg-white text-slate-900 rounded-lg border border-slate-200 shadow-xs overflow-hidden max-w-4xl mx-auto">
-      <header className="flex flex-wrap items-start justify-between gap-4 px-8 py-6 border-b border-slate-200 bg-white">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-1">Debrief</p>
-          <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Analysis report</h1>
-          <p className="text-sm text-slate-600 mt-1 font-mono">{project.name}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" className="border-slate-300 text-slate-700 bg-white" disabled>
-            Download as PDF
-          </Button>
-          <Button type="button" variant="outline" size="sm" className="border-slate-300 text-slate-700 bg-white" disabled>
-            Share
-          </Button>
-        </div>
+      <header className="px-8 py-6 border-b border-slate-200 bg-white">
+        <p className="text-xs font-medium uppercase tracking-widest text-slate-500 mb-1">Debrief</p>
+        <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Technical brief</h1>
+        <p className="text-sm text-slate-600 mt-1 font-mono">{project.name}</p>
       </header>
 
       <div className="px-4 md:px-8">
         {sectionShell(
-          "Identity",
+          "At a glance",
           <>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm mb-8">
               <div>
                 <dt className="text-slate-500">Repository</dt>
                 <dd className="font-medium text-slate-900">{project.name}</dd>
@@ -719,31 +709,64 @@ export function DebriefReport({
                 <dd className="font-mono text-slate-800">{DEBRIEF_VERSION}</dd>
               </div>
               <div className="flex items-center gap-2">
-                <dt className="text-slate-500 sr-only">Evidence</dt>
+                <dt className="text-slate-500 sr-only">Evidence trail</dt>
                 <dd>
                   {hasEvidenceRecord ? (
                     <span className="inline-flex items-center rounded-full border border-emerald-600/40 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                      Signed evidence record
+                      Evidence trail recorded
                     </span>
                   ) : (
-                    <span className="text-slate-500 text-sm">No coverage run id on file</span>
+                    <span className="text-slate-500 text-sm">No evidence trail metadata for this run</span>
                   )}
                 </dd>
               </div>
             </dl>
-          </>,
-        )}
-
-        {sectionShell(
-          "60-second summary",
-          <>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">What this is</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Summary</p>
             <p className="text-xl leading-relaxed text-slate-800 font-normal max-w-3xl">{summaryText}</p>
           </>,
         )}
 
         {sectionShell(
-          "Anatomy",
+          "What we found",
+          <>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Flagged patterns</p>
+            {watchList.length === 0 ? (
+              <p className="text-slate-600 mb-8">No patterns flagged</p>
+            ) : (
+              <ul className="space-y-3 list-none p-0 m-0 mb-8">
+                {watchList.map((w, i) => (
+                  <li key={i} className="flex gap-2 text-slate-800">
+                    <span className="shrink-0 text-amber-700" aria-hidden={true}>
+                      !
+                    </span>
+                    <span>
+                      <span className="font-medium">{w.statement}</span>
+                      {w.ref ? <span className="block text-sm text-slate-600 font-mono mt-1">{w.ref}</span> : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Gaps</p>
+            {unknownsList.length === 0 ? (
+              <p className="text-slate-600">No gaps detected</p>
+            ) : (
+              <ul className="space-y-3 list-none p-0 m-0">
+                {unknownsList.map((u, i) => (
+                  <li key={i} className="flex gap-2 text-slate-800">
+                    <span className="shrink-0 text-slate-500" aria-hidden={true}>
+                      ○
+                    </span>
+                    <span>{u}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>,
+        )}
+
+        {sectionShell(
+          "How it runs",
           <>
             {anatomy.map((p, i) => (
               <p key={i} className="leading-relaxed text-slate-800">
@@ -772,75 +795,7 @@ export function DebriefReport({
         )}
 
         {sectionShell(
-          "Patterns worth attention",
-          <>
-            {watchList.length === 0 ? (
-              <p className="text-slate-600">No patterns flagged</p>
-            ) : (
-              <ul className="space-y-3 list-none p-0 m-0">
-                {watchList.map((w, i) => (
-                  <li key={i} className="flex gap-2 text-slate-800">
-                    <span className="shrink-0" aria-hidden>
-                      ⚠️
-                    </span>
-                    <span>
-                      <span className="font-medium">{w.statement}</span>
-                      {w.ref ? <span className="block text-sm text-slate-600 font-mono mt-1">{w.ref}</span> : null}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>,
-        )}
-
-        {sectionShell(
-          "What's missing",
-          <>
-            {unknownsList.length === 0 ? (
-              <p className="text-slate-600">No gaps detected</p>
-            ) : (
-              <ul className="space-y-3 list-none p-0 m-0">
-                {unknownsList.map((u, i) => (
-                  <li key={i} className="flex gap-2 text-slate-800">
-                    <span className="shrink-0" aria-hidden>
-                      ○
-                    </span>
-                    <span>{u}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>,
-        )}
-
-        {sectionShell(
-          "Tools worth considering",
-          <>
-            {tools.length === 0 ? (
-              <p className="text-slate-600">No tool suggestions matched the gaps detected in this run.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {tools.map((t) => (
-                  <a
-                    key={t.name}
-                    href={t.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 hover:border-slate-300 transition-colors block no-underline text-inherit"
-                  >
-                    <h3 className="font-semibold text-slate-900">{t.name}</h3>
-                    <p className="text-sm text-slate-700 mt-1 leading-snug">{t.description}</p>
-                    <p className="text-xs text-slate-500 mt-2 font-mono truncate">{t.href}</p>
-                  </a>
-                ))}
-              </div>
-            )}
-          </>,
-        )}
-
-        {sectionShell(
-          "Evidence record",
+          "Evidence",
           <>
             <div className="overflow-x-auto rounded-md border border-slate-200">
               <table className="w-full text-sm text-left">
@@ -868,14 +823,53 @@ export function DebriefReport({
                 <code className="font-mono text-xs bg-slate-100 px-2 py-1 rounded text-slate-800">
                   {evidenceSignature.slice(0, 24)}…
                 </code>
-                <Button type="button" variant="outline" size="sm" className="border-slate-300" disabled>
-                  Verify
-                </Button>
               </div>
             ) : null}
             <p className="text-xs text-slate-500 mt-4 leading-relaxed max-w-2xl">
               Findings are anchored to file:line evidence. Hashes verify snippet presence at time of analysis.
             </p>
+            {projectId != null ? (
+              <div className="mt-4 space-y-1">
+                <p className="text-sm">
+                  <Link
+                    href={`/projects/${projectId}/verification${selectedRunId != null ? `?runId=${selectedRunId}` : ""}`}
+                    className="font-medium text-slate-800 underline underline-offset-2 hover:text-slate-600"
+                  >
+                    Verification package (beta) →
+                  </Link>
+                </p>
+                <p className="text-xs text-slate-500 max-w-xl leading-relaxed">
+                  Export an evidence bundle and run a verification check. Packages use the{" "}
+                  <strong className="font-medium text-slate-600">latest analysis Debrief has stored for this project</strong>
+                  , not necessarily the run tab you have open.
+                </p>
+              </div>
+            ) : null}
+          </>,
+        )}
+
+        {sectionShell(
+          "Suggestions",
+          <>
+            {tools.length === 0 ? (
+              <p className="text-slate-600">No suggestions matched the gaps detected in this run.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {tools.map((t) => (
+                  <a
+                    key={t.name}
+                    href={t.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 hover:border-slate-300 transition-colors block no-underline text-inherit"
+                  >
+                    <h3 className="font-semibold text-slate-900">{t.name}</h3>
+                    <p className="text-sm text-slate-700 mt-1 leading-snug">{t.description}</p>
+                    <p className="text-xs text-slate-500 mt-2 font-mono truncate">{t.href}</p>
+                  </a>
+                ))}
+              </div>
+            )}
           </>,
         )}
       </div>
@@ -897,7 +891,7 @@ export function DebriefReport({
     projectId != null && educationRunId != null ? (
       <div className="rounded-xl border border-teal-200 bg-linear-to-r from-teal-50 to-cyan-50 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
         <p className="text-sm text-teal-950 font-medium leading-snug">
-          Open Education Mode to see how this debrief run connects to Debrief&apos;s verified receipt chain in Postgres — the same checks auditors care about.
+          See how Debrief turned this repository into your brief — from scan to saved results — in one visual walkthrough.
         </p>
         <Link href={`/education/${educationRunId}/chain`}>
           <Button
@@ -906,7 +900,7 @@ export function DebriefReport({
             data-testid="education-chain-cta"
           >
             <Hexagon className="w-4 h-4" strokeWidth={2.25} aria-hidden />
-            See how this codebase is wired →
+            How this debrief was produced →
           </Button>
         </Link>
       </div>
@@ -936,19 +930,19 @@ export function DebriefReport({
             value="learner"
             className="data-[state=active]:bg-orange-100 data-[state=active]:text-orange-950 data-[state=active]:shadow-xs text-amber-950/90 rounded-md"
           >
-            Learner Report
+            Plain-language brief
           </TabsTrigger>
           <TabsTrigger
             value="pro"
             className="data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs rounded-md"
           >
-            Pro Report
+            Technical brief
           </TabsTrigger>
         </TabsList>
         <TabsContent value="learner" className="mt-4 focus-visible:outline-hidden">
           <article className="rounded-xl border border-amber-200/90 bg-linear-to-b from-amber-50 via-orange-50/50 to-amber-50/30 shadow-xs overflow-hidden text-amber-950">
             <header className="px-6 py-4 border-b border-amber-200/70 bg-orange-100/40">
-              <p className="text-xs font-semibold uppercase tracking-widest text-amber-800/90">Learner mode</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-amber-800/90">Plain-language</p>
               <h2 className="text-xl font-semibold text-amber-950 mt-1">Plain-language debrief</h2>
               <p className="text-sm text-amber-900/85 mt-1 max-w-prose">
                 Written for builders who are not diving into the technical dossier first — same analysis, warmer words.

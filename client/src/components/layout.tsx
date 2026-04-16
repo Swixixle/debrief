@@ -64,35 +64,33 @@ export function Layout({
             </div>
           </Link>
 
-          <nav className="flex items-center gap-1 md:gap-2">
+          <nav className="flex items-center gap-1 md:gap-2 flex-wrap justify-end">
             <NavLink href="/" active={location === "/"} isLight={isLight}>
-              New debrief
+              Analyze
             </NavLink>
             <NavLink href="/projects" active={location.startsWith("/projects")} isLight={isLight}>
-              Archives
+              Library
             </NavLink>
-            <NavLink href="/targets" active={location.startsWith("/targets")} isLight={isLight}>
-              Targets
+            <NavLink href="/targets" active={location.startsWith("/targets") || location.startsWith("/timeline")} isLight={isLight}>
+              Monitoring
             </NavLink>
-            <NavLink href="/ci" active={location.startsWith("/ci")} isLight={isLight}>
-              CI Feed
-            </NavLink>
-            <NavLink href="/billing" active={location.startsWith("/billing")} isLight={isLight}>
-              Billing
+            <NavLink href="/settings" active={location.startsWith("/settings")} isLight={isLight}>
+              Account
             </NavLink>
             <div className={cn("hidden sm:flex items-center", isLight ? "text-slate-600" : "text-muted-foreground")}>
               <CreditBadge isLight={isLight} />
             </div>
-            <ClerkNav isLight={isLight} />
+            <ClerkNav headerTone={isLight ? "light" : "default"} />
             <div className={cn("w-px h-6 mx-2", isLight ? "bg-slate-200" : "bg-border")} />
             <a
-              href="https://github.com"
+              href="https://github.com/Swixixle/debrief"
               target="_blank"
               rel="noreferrer"
               className={cn(
                 "p-2 transition-colors",
                 isLight ? "text-slate-500 hover:text-slate-900" : "text-muted-foreground hover:text-foreground",
               )}
+              title="Debrief on GitHub"
             >
               <Github className="w-5 h-5" />
             </a>
@@ -114,12 +112,19 @@ export function Layout({
             isLight ? "text-slate-600" : "text-muted-foreground",
           )}
         >
-          <p className="font-mono text-xs">
-            {isLight ? <span className="text-slate-900 font-medium">DEBRIEF</span> : <span className="text-primary">SYSTEM:</span>}
-            {!isLight && " ONLINE"}
-            {isLight && " — Ready"}
+          <p className="text-xs text-muted-foreground">
+            <span className={cn("font-medium", isLight ? "text-slate-900" : "text-foreground")}>Debrief</span>
           </p>
-          <p>© 2026 Debrief. All rights reserved.</p>
+          <p className="text-center md:text-right">
+            <span className="text-muted-foreground">© 2026 Debrief.</span>{" "}
+            <Link href="/ci" className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline text-xs">
+              Activity
+            </Link>
+            <span className="text-muted-foreground mx-1.5">·</span>
+            <Link href="/billing" className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline text-xs">
+              Billing
+            </Link>
+          </p>
         </div>
       </footer>
     </div>

@@ -173,7 +173,7 @@
   }
 }
 
-/** Education Mode — Receptionist panel loading strip */
+/** Debrief walkthrough — receptionist panel loading strip */
 @keyframes edu-reception-line {
   0%,
   100% {
@@ -241,7 +241,7 @@
     --font-mono: 'JetBrains Mono', monospace;
     --font-display: 'Space Grotesk', sans-serif;
 
-    /* Education Mode — cognitive grammar tokens */
+    /* Walkthrough graph — cognitive grammar tokens */
     --edu-green: #22c55e;
     --edu-yellow: #eab308;
     --edu-red: #ef4444;

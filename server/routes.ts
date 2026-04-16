@@ -668,7 +668,10 @@ export async function registerRoutes(
 
       const input = schema.parse(req.body);
 
-      // Fetch the analysis
+      // Contract note: the request field is named `analysisId` for historical reasons, but
+      // `getAnalysisByProjectId` expects a **project id** and returns the latest analysis row
+      // for that project. Clients should pass `projects.id`; the stored `certificates.analysis_id`
+      // column currently holds that same numeric id (not necessarily `analyses.id`).
       const analysis = await storage.getAnalysisByProjectId(input.analysisId);
       if (!analysis) {
         return res.status(404).json({ error: "Analysis not found" });

@@ -8,12 +8,14 @@ import { GitBranch, Calendar, Terminal } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { motion } from "framer-motion";
 import { useDebriefApiKey } from "@/contexts/DebriefApiKeyContext";
+import { isOpenWeb } from "@/lib/openWeb";
 
 export default function ProjectList() {
   const { apiKey } = useDebriefApiKey();
   const { data: projects, isLoading, error } = useProjects();
+  const hasApiAccess = isOpenWeb || Boolean(apiKey.trim());
 
-  if (!apiKey) {
+  if (!hasApiAccess) {
     return (
       <Layout>
         <div className="max-w-lg mx-auto text-center py-20 px-4">
@@ -21,7 +23,7 @@ export default function ProjectList() {
             <CardContent className="pt-8 pb-8 space-y-4">
               <h2 className="text-lg font-semibold">API key required</h2>
               <p className="text-muted-foreground text-sm">
-                Enter your API key on the home page first, then you can browse archived debriefs.
+                Enter your API key on the home page first, then you can open your saved debriefs.
               </p>
               <Link href="/">
                 <Button>Go to home</Button>
@@ -38,7 +40,7 @@ export default function ProjectList() {
       <Layout>
         <div className="flex flex-col items-center justify-center h-[50vh] space-y-4">
           <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <p className="text-muted-foreground font-mono animate-pulse">Retrieving archives...</p>
+          <p className="text-muted-foreground font-mono animate-pulse">Loading library…</p>
         </div>
       </Layout>
     );
@@ -60,12 +62,12 @@ export default function ProjectList() {
       <div className="max-w-5xl mx-auto">
         <div className="flex items-end justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-display font-bold text-foreground">Archives</h1>
-            <p className="text-muted-foreground mt-1">Previous analyses and reports.</p>
+            <h1 className="text-3xl font-display font-bold text-foreground">Library</h1>
+            <p className="text-muted-foreground mt-1">Your debriefs and analysis history.</p>
           </div>
           <Link href="/">
             <div className="text-sm text-primary hover:text-primary/80 font-medium cursor-pointer">
-              + New Analysis
+              + New debrief
             </div>
           </Link>
         </div>
@@ -113,9 +115,9 @@ export default function ProjectList() {
 
           {projects?.length === 0 && (
             <div className="text-center py-20 border border-dashed border-border rounded-xl">
-              <p className="text-muted-foreground">No analyses found in the archives.</p>
+              <p className="text-muted-foreground">No debriefs in your library yet.</p>
               <Link href="/">
-                <div className="mt-4 text-primary hover:underline cursor-pointer">Start your first analysis</div>
+                <div className="mt-4 text-primary hover:underline cursor-pointer">Run your first debrief</div>
               </Link>
             </div>
           )}

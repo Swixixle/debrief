@@ -9,12 +9,14 @@ import { Loader2, AlertTriangle, ArrowLeft, ChevronDown, ChevronRight } from "lu
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useDebriefApiKey } from "@/contexts/DebriefApiKeyContext";
+import { isOpenWeb } from "@/lib/openWeb";
 
 export default function ProjectDetails() {
   const [match, params] = useRoute("/projects/:id");
   const [loc] = useLocation();
   const projectId = parseInt(params?.id || "0", 10);
   const { apiKey } = useDebriefApiKey();
+  const hasApiAccess = isOpenWeb || Boolean(apiKey.trim());
   const { data, isPending, isError, error } = useAnalysisStatus(projectId);
   const selectedRunId = useMemo(() => {
     const q = loc.includes("?") ? loc.split("?")[1] : "";
@@ -25,7 +27,7 @@ export default function ProjectDetails() {
   const runDetailQ = useProjectRunDetail(projectId, selectedRunId);
   const [rawOpen, setRawOpen] = useState(false);
 
-  if (!apiKey) {
+  if (!hasApiAccess) {
     return (
       <Layout>
         <div className="max-w-lg mx-auto text-center py-20 px-4">
@@ -33,7 +35,7 @@ export default function ProjectDetails() {
             <CardContent className="pt-8 pb-8 space-y-4">
               <h2 className="text-lg font-semibold">API key required</h2>
               <p className="text-muted-foreground text-sm">
-                An API key is required. Open the home page, enter your key under Settings, then run a debrief. Keys stay in memory for this session only.
+                An API key is required. Open Analyze (home), enter your key under Account, then run a debrief. Keys stay in memory for this session only.
               </p>
               <Link href="/">
                 <Button variant="default">Go to home</Button>
@@ -96,7 +98,7 @@ export default function ProjectDetails() {
         <div className="text-center py-20">
           <h2 className="text-xl font-bold">Project not found</h2>
           <Link href="/projects">
-            <span className="text-primary mt-4 inline-block cursor-pointer">Back to archives</span>
+            <span className="text-primary mt-4 inline-block cursor-pointer">Back to library</span>
           </Link>
         </div>
       </Layout>
@@ -170,7 +172,7 @@ export default function ProjectDetails() {
                 data-testid="toggle-raw-data"
               >
                 {rawOpen ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
-                Raw data (developers)
+                Developer details (raw JSON)
               </button>
               {rawOpen && (
                 <pre
@@ -190,7 +192,7 @@ export default function ProjectDetails() {
               <p>No analysis record found yet.</p>
               <Link href="/projects">
                 <Button className="mt-4" variant="outline">
-                  Back to archives
+                                   Back to library
                 </Button>
               </Link>
             </CardContent>

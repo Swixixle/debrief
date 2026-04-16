@@ -9,6 +9,7 @@ import Home from "@/pages/home";
 import Portal from "@/pages/portal";
 import ProjectList from "@/pages/project-list";
 import ProjectDetails from "@/pages/project-details";
+import ProjectVerification from "@/pages/project-verification";
 import ProjectProgress from "@/pages/project-progress";
 import CiFeed from "@/pages/ci-feed";
 import Settings from "@/pages/settings";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/portal" component={Portal} />
       <Route path="/projects" component={ProjectList} />
+      <Route path="/projects/:id/verification" component={ProjectVerification} />
       <Route path="/projects/:id/progress" component={ProjectProgress} />
       <Route path="/projects/:id" component={ProjectDetails} />
       <Route path="/ci" component={CiFeed} />

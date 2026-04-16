@@ -1,5 +1,5 @@
 /**
- * Education Mode — Evidence Chain cognitive model (shared by API + unit tests).
+ * Evidence chain walkthrough — cognitive model for the `/education/:runId/chain` UI (shared by API + unit tests).
  */
 
 import { computeLogicalDependencyOrder } from "./educationTopology";
