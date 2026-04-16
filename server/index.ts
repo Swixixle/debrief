@@ -61,7 +61,18 @@ app.use(apiKeyAuth);
 app.use(withClerk);
 app.use(upsertUserMiddleware);
 
-// CORS Configuration - secure cross-origin requests
+function isAllowedDevLoopbackOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+// CORS — explicit origins only; credentials paired only when Origin is allowed (no wildcards).
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const rawOrigins = process.env.ALLOWED_ORIGINS?.trim() ?? "";
@@ -70,35 +81,38 @@ app.use((req, res, next) => {
     : [];
 
   // R6 mitigation — warning is intentional, do not remove.
-  // Set ALLOWED_ORIGINS in Render dashboard (e.g. debrief-secrets env group) before going public.
   if (process.env.NODE_ENV === "production" && !rawOrigins) {
     console.warn(
       "[SECURITY] ALLOWED_ORIGINS is not set in production. CORS will block all cross-origin requests. Set ALLOWED_ORIGINS in your environment.",
     );
   }
 
-  // In production, only allow explicitly listed origins
-  if (process.env.NODE_ENV === "production") {
-    if (origin && allowedOrigins.includes(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-    }
-  } else {
-    // In development, allow localhost origins
-    if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
+  let allowThisOrigin = false;
+  if (typeof origin === "string" && origin.length > 0) {
+    if (process.env.NODE_ENV === "production") {
+      allowThisOrigin = allowedOrigins.includes(origin);
+    } else {
+      allowThisOrigin =
+        allowedOrigins.includes(origin) || isAllowedDevLoopbackOrigin(origin);
     }
   }
-  
+
+  if (allowThisOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", origin as string);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Api-Key, X-Hub-Signature-256, X-GitHub-Delivery, X-GitHub-Event");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours
-  
-  // Handle preflight requests
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Admin-Key, X-Api-Key, X-Hub-Signature-256, X-GitHub-Delivery, X-GitHub-Event",
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+
   if (req.method === "OPTIONS") {
     return res.status(204).end();
   }
-  
+
   next();
 });
 
