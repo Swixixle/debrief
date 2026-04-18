@@ -729,15 +729,18 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/certificates/:id/evidence-bundle.json - Get evidence bundle as JSON
-  app.get("/api/certificates/:id/evidence-bundle.json", async (req: Request, res: Response) => {
+  // POST /api/certificates/evidence-bundle.json - Get evidence bundle as JSON
+  app.post("/api/certificates/evidence-bundle.json", async (req: Request, res: Response) => {
     if (!evidenceBundleRateLimiter()) {
       return res.status(429).json({ error: "Rate limit exceeded" });
     }
     if (!requireAuth(req, res)) return;
 
     try {
-      const certificateId = req.params.id;
+      const certificateId = String(req.body?.id ?? "");
+      if (!certificateId) {
+        return res.status(400).json({ error: "Missing certificate id" });
+      }
       const certificate = await storage.getCertificate(certificateId);
 
       if (!certificate) {
@@ -753,15 +756,18 @@ export async function registerRoutes(
     }
   });
 
-  // GET /api/certificates/:id - Get certificate metadata
-  app.get("/api/certificates/:id", async (req: Request, res: Response) => {
+  // POST /api/certificates/metadata - Get certificate metadata
+  app.post("/api/certificates/metadata", async (req: Request, res: Response) => {
     if (!evidenceBundleRateLimiter()) {
       return res.status(429).json({ error: "Rate limit exceeded" });
     }
     if (!requireAuth(req, res)) return;
 
     try {
-      const certificateId = req.params.id;
+      const certificateId = String(req.body?.id ?? "");
+      if (!certificateId) {
+        return res.status(400).json({ error: "Missing certificate id" });
+      }
       const certificate = await storage.getCertificate(certificateId);
 
       if (!certificate) {
