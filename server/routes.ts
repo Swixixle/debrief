@@ -1227,7 +1227,6 @@ export async function registerRoutes(
       try {
         await assertRealPathUnderBase(file.path, uploadIngestDir);
       } catch {
-        await fs.unlink(file.path).catch(() => {});
         return res.status(400).json({ message: "Invalid upload path" });
       }
       try {
