@@ -53,19 +53,28 @@ export function assertResolvedPathUnderBase(candidatePath: string, baseDir: stri
 export async function assertRealPathUnderBase(candidatePath: string, baseDir: string): Promise<void> {
   const base = path.resolve(baseDir);
   const resolved = path.resolve(candidatePath);
+
+  // First perform a purely lexical containment check before any filesystem resolution on candidate.
+  const initialRel = path.relative(base, resolved);
+  if (initialRel.startsWith("..") || path.isAbsolute(initialRel)) {
+    throw new Error("Path not under allowed directory");
+  }
+
   let baseReal: string;
   try {
     baseReal = await fs.realpath(base);
   } catch {
     baseReal = base;
   }
+
   let candidateReal: string;
   try {
     candidateReal = await fs.realpath(resolved);
   } catch {
-    assertResolvedPathUnderBase(candidatePath, baseDir);
-    return;
+    // If candidate doesn't exist yet, keep the already validated resolved path.
+    candidateReal = resolved;
   }
+
   const rel = path.relative(baseReal, candidateReal);
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error("Path not under allowed directory");
