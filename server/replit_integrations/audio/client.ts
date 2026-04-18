@@ -5,10 +5,14 @@
 import OpenAI, { toFile } from "openai";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
-import { writeFile, unlink, readFile } from "fs/promises";
-import { randomUUID } from "crypto";
+import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+
+import { assertResolvedPathUnderBase } from "../../utils/pathSanitizer";
+
+/** Align with Replit audio route body limit (express.json limit). */
+const AUDIO_CONVERT_MAX_BYTES = 50 * 1024 * 1024;
 
 export const openai = new OpenAI({
   apiKey:
@@ -60,11 +64,20 @@ export function detectAudioFormat(buffer: Buffer): AudioFormat {
  * require seeking to find the audio track.
  */
 export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
-  const inputPath = join(tmpdir(), `input-${randomUUID()}`);
-  const outputPath = join(tmpdir(), `output-${randomUUID()}.wav`);
+  if (audioBuffer.length > AUDIO_CONVERT_MAX_BYTES) {
+    throw new Error(
+      `Audio payload exceeds maximum size (${AUDIO_CONVERT_MAX_BYTES} bytes)`,
+    );
+  }
+  const workDir = await mkdtemp(join(tmpdir(), "debrief-audio-"));
+  const inputPath = join(workDir, "input.media");
+  const outputPath = join(workDir, "output.wav");
+  assertResolvedPathUnderBase(inputPath, workDir);
+  assertResolvedPathUnderBase(outputPath, workDir);
 
   try {
-    // Write input to temp file (required for video containers that need seeking)
+    // Write input to temp file (required for video containers that need seeking).
+    // Paths are fixed basenames under an exclusive mkdtemp directory (no user path segments).
     await writeFile(inputPath, audioBuffer);
 
     // Run ffmpeg with file paths
@@ -91,9 +104,7 @@ export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
     // Read converted audio
     return await readFile(outputPath);
   } finally {
-    // Clean up temp files
-    await unlink(inputPath).catch(() => {});
-    await unlink(outputPath).catch(() => {});
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
