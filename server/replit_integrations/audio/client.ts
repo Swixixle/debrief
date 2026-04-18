@@ -78,6 +78,7 @@ export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
   try {
     // Write input to temp file (required for video containers that need seeking).
     // Paths are fixed basenames under an exclusive mkdtemp directory (no user path segments).
+    // codeql[js/http-to-file-access]: Payload size-capped; paths validated with assertResolvedPathUnderBase above.
     await writeFile(inputPath, audioBuffer);
 
     // Run ffmpeg with file paths

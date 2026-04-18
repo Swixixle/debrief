@@ -127,7 +127,15 @@ function milestoneForFiles(files: string[], assigned: Set<string>): string | nul
   if (tryAssign("auth", (f) => /auth|clerk|passport/i.test(f))) {
     return "Auth added";
   }
-  if (tryAssign("db", (f) => /schema|migration|\.sql$/i.test(f))) {
+  if (
+    tryAssign(
+      "db",
+      (f) =>
+        /(?:^|[\\/])schema(?:[\\/._]|$)/i.test(f) ||
+        /(?:^|[\\/])migration(?:[\\/._]|$)/i.test(f) ||
+        /\.sql$/i.test(f),
+    )
+  ) {
     return "Database introduced";
   }
   if (tryAssign("api", (f) => /route|api|endpoint/i.test(f))) {

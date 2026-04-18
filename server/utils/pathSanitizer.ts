@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 
 /**
@@ -61,6 +62,7 @@ export async function assertRealPathUnderBase(candidatePath: string, baseDir: st
   }
   let candidateReal: string;
   try {
+    // codeql[js/path-injection]: realpath is used for symlink resolution; the result is rejected unless it stays under baseReal (see relative-path check below).
     candidateReal = await fs.realpath(resolved);
   } catch {
     assertResolvedPathUnderBase(candidatePath, baseDir);
@@ -70,4 +72,21 @@ export async function assertRealPathUnderBase(candidatePath: string, baseDir: st
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error("Path not under allowed directory");
   }
+}
+
+/**
+ * After verifying a multer temp path is under uploadBaseDir, copy bytes to a server-chosen name
+ * so downstream paths are not multer-controlled (CodeQL path-injection hygiene).
+ */
+export async function quarantineVerifiedUpload(
+  multerPath: string,
+  uploadBaseDir: string,
+): Promise<string> {
+  await assertRealPathUnderBase(multerPath, uploadBaseDir);
+  const safeName = `q-${Date.now()}-${randomBytes(12).toString("hex")}`;
+  const dest = path.join(uploadBaseDir, safeName);
+  assertResolvedPathUnderBase(dest, uploadBaseDir);
+  await fs.copyFile(multerPath, dest);
+  await fs.unlink(multerPath).catch(() => {});
+  return dest;
 }

@@ -407,7 +407,12 @@ def scan_webhooks_and_ws(
                     line=i + 1,
                 )
             )
-        if "socket.io" in line.lower() or "new WebSocket(" in line or "ws://" in line or "@websocket" in line:
+        if (
+            re.search(r"\bsocket\.io\b", line, re.I)
+            or re.search(r"\bnew\s+WebSocket\s*\(", line)
+            or re.search(r'["\']wss?://', line)
+            or "@websocket" in line
+        ):
             ws_entries.append(
                 WsEntry(
                     kind="websocket",

@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from git import Repo, GitCommandError
 
 
@@ -21,6 +22,13 @@ def _inject_token_into_url(url: str, token: str) -> str:
     if m:
         return f"https://x-access-token:{token}@{m.group(1)}/{m.group(2)}"
     return url
+
+
+def _hostname_is_github_com_family(host: str) -> bool:
+    h = (host or "").lower()
+    if h.startswith("www."):
+        h = h[4:]
+    return h == "github.com" or h.endswith(".github.com")
 
 
 def acquire_target(
@@ -52,8 +60,13 @@ def acquire_target(
 
         clone_url = target
         gh_token = os.environ.get("GITHUB_TOKEN", "")
-        if gh_token and "github.com" in target:
-            clone_url = _inject_token_into_url(target, gh_token)
+        if gh_token and target:
+            try:
+                parsed = urlparse(target)
+                if parsed.hostname and _hostname_is_github_com_family(parsed.hostname):
+                    clone_url = _inject_token_into_url(target, gh_token)
+            except Exception:
+                pass
 
         try:
             Repo.clone_from(clone_url, repo_dir)

@@ -10,11 +10,13 @@ import fs from "fs/promises";
 import { existsSync, readFileSync, appendFileSync, mkdirSync, createReadStream } from "fs";
 import crypto from "crypto";
 import { processOneJob, startWorkerLoop, getDiskStatus } from "./ci-worker";
-import { 
-  generateEvidenceBundle, 
-  generateTenantKeyPair, 
+import {
+  generateEvidenceBundle,
+  generateTenantKeyPair,
   verifyEvidenceBundle,
-  type EvidenceBundleOptions 
+  evidenceBundleVerifySchema,
+  type EvidenceBundle,
+  type EvidenceBundleOptions,
 } from "./evidence-bundle";
 import {
   ingest,
@@ -33,11 +35,21 @@ import { mountBillingRoutes } from "./billing/routes";
 import { mountApiKeyRoutes } from "./routes/api-keys";
 import { apiV1Router } from "./routes/api-v1";
 import { heavyLimiter, authLimiter } from "./middleware/rateLimiter";
-import { assertRealPathUnderBase } from "./utils/pathSanitizer";
+import { assertRealPathUnderBase, quarantineVerifiedUpload } from "./utils/pathSanitizer";
+import { redactForLog } from "./utils/logRedaction";
 import { isHostnameUnderRoot } from "@shared/urlHost";
 
 function logAdminEvent(event: string, detail?: Record<string, unknown>) {
   logEvent(0, event, detail);
+}
+
+function sanitizeMultipartImportName(raw: string): string {
+  const s = raw
+    .replace(/[\r\n\x00-\x1f\\/]/g, "_")
+    .replace(/\.\./g, "_")
+    .trim()
+    .slice(0, 240);
+  return s || "Uploaded import";
 }
 
 // Rate limiters for different endpoints
@@ -800,14 +812,13 @@ export async function registerRoutes(
     // Verification endpoint is public but rate limited
 
     try {
-      const bundle = req.body;
-
-      if (!bundle || typeof bundle !== "object") {
+      const parsed = evidenceBundleVerifySchema.safeParse(req.body);
+      if (!parsed.success) {
         return res.status(400).json({ error: "Invalid bundle format" });
       }
 
-      const result = verifyEvidenceBundle(bundle);
-      
+      const result = verifyEvidenceBundle(parsed.data as EvidenceBundle);
+
       res.json({
         ok: true,
         valid: result.valid,
@@ -894,7 +905,9 @@ export async function registerRoutes(
 
     const isNew = await storage.checkAndRecordDelivery(deliveryId, event, repoOwner, repoNameForDelivery);
     if (!isNew) {
-      console.log(`[Webhook] Replay blocked: delivery=${deliveryId}`);
+      console.log(
+        redactForLog(`[Webhook] Replay blocked: delivery=${deliveryId}`, 500),
+      );
       return res.status(202).json({ ok: true, deduped: true });
     }
 
@@ -911,13 +924,17 @@ export async function registerRoutes(
 
       const existing = await storage.findExistingCiRun(owner, repo, sha);
       if (existing) {
-        console.log(`[Webhook] Deduplicated push for ${owner}/${repo}@${sha}`);
+        console.log(
+          redactForLog(`[Webhook] Deduplicated push for ${owner}/${repo}@${sha}`, 800),
+        );
         return res.json({ ok: true, run_id: existing.id, deduplicated: true });
       }
 
       const run = await storage.createCiRun({ repoOwner: owner, repoName: repo, ref, commitSha: sha, eventType: "push", status: "QUEUED" });
       await storage.createCiJob(run.id);
-      console.log(`[Webhook] Created run ${run.id} for push ${owner}/${repo}@${sha}`);
+      console.log(
+        redactForLog(`[Webhook] Created run ${run.id} for push ${owner}/${repo}@${sha}`, 800),
+      );
       return res.json({ ok: true, run_id: run.id });
 
     } else if (event === "pull_request") {
@@ -942,7 +959,9 @@ export async function registerRoutes(
 
       const run = await storage.createCiRun({ repoOwner: owner, repoName: repo, ref, commitSha: sha, eventType: "pull_request", status: "QUEUED" });
       await storage.createCiJob(run.id);
-      console.log(`[Webhook] Created run ${run.id} for PR ${owner}/${repo}@${sha}`);
+      console.log(
+        redactForLog(`[Webhook] Created run ${run.id} for PR ${owner}/${repo}@${sha}`, 800),
+      );
       return res.json({ ok: true, run_id: run.id });
 
     } else {
@@ -1003,7 +1022,9 @@ export async function registerRoutes(
       status: "QUEUED",
     });
     await storage.createCiJob(run.id);
-    console.log(`[CI] Manual enqueue: run=${run.id} ${owner}/${repo}@${commit_sha}`);
+    console.log(
+      redactForLog(`[CI] Manual enqueue: run=${run.id} ${owner}/${repo}@${commit_sha}`, 800),
+    );
     res.json({ ok: true, run_id: run.id });
   });
 
@@ -1107,30 +1128,34 @@ export async function registerRoutes(
       if (!file?.path) {
         return res.status(400).json({ message: "file required (multipart field: file)" });
       }
+      let workPath: string;
       try {
-        await assertRealPathUnderBase(file.path, uploadIngestDir);
+        workPath = await quarantineVerifiedUpload(file.path, uploadIngestDir);
       } catch {
         await fs.unlink(file.path).catch(() => {});
         return res.status(400).json({ message: "Invalid upload path" });
       }
       const kind = String(req.body?.kind || "");
-      const name = typeof req.body?.name === "string" ? req.body.name : "Uploaded import";
+      const name = sanitizeMultipartImportName(
+        typeof req.body?.name === "string" ? req.body.name : "Uploaded import",
+      );
       const reportAudience = req.body?.reportAudience === "learner" ? "learner" : "pro";
       let prepared;
       try {
         if (kind === "zip") {
-          prepared = await ingest({ type: "zip", filePath: file.path });
+          prepared = await ingest({ type: "zip", filePath: workPath });
         } else if (kind === "audio") {
-          prepared = await ingest({ type: "audio", filePath: file.path });
+          prepared = await ingest({ type: "audio", filePath: workPath });
         } else {
-          await fs.unlink(file.path).catch(() => {});
+          await fs.unlink(workPath).catch(() => {});
           return res.status(400).json({ message: 'kind must be "zip" or "audio"' });
         }
-      } catch (err: any) {
-        await fs.unlink(file.path).catch(() => {});
-        return res.status(400).json({ message: err?.message || "ingest failed" });
+      } catch (err: unknown) {
+        await fs.unlink(workPath).catch(() => {});
+        console.error("[ingest analyze-upload]", err);
+        return res.status(400).json({ message: "ingest failed" });
       }
-      await fs.unlink(file.path).catch(() => {});
+      await fs.unlink(workPath).catch(() => {});
       const project = await storage.createProject(
         {
           url: kind === "audio" ? `audio:${name}` : `zip:${name}`,
@@ -1230,18 +1255,20 @@ export async function registerRoutes(
       if (!file?.path) {
         return res.status(400).json({ message: "file required (multipart field: file)" });
       }
+      let workPath: string;
       try {
-        await assertRealPathUnderBase(file.path, uploadIngestDir);
+        workPath = await quarantineVerifiedUpload(file.path, uploadIngestDir);
       } catch {
+        await fs.unlink(file.path).catch(() => {});
         return res.status(400).json({ message: "Invalid upload path" });
       }
       try {
         const { transcribeAudio, sha256File } = await import("./ingestion/audio_ingest");
         const [transcript, audioHash] = await Promise.all([
-          transcribeAudio(file.path),
-          sha256File(file.path),
+          transcribeAudio(workPath, uploadIngestDir),
+          sha256File(workPath, uploadIngestDir),
         ]);
-        await fs.unlink(file.path).catch(() => {});
+        await fs.unlink(workPath).catch(() => {});
         const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl : undefined;
         let jobId: string | null = null;
         if (repoUrl?.trim()) {
@@ -1249,7 +1276,7 @@ export async function registerRoutes(
         }
         res.json({ transcript, audioHash, jobId });
       } catch (err: any) {
-        await fs.unlink(file.path).catch(() => {});
+        await fs.unlink(workPath).catch(() => {});
         res.status(400).json({ message: err?.message || "transcription failed" });
       }
     },

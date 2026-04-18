@@ -2,10 +2,13 @@ import fs from "node:fs";
 import fsP from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { assertRealPathUnderBase } from "../utils/pathSanitizer";
-import { ingestMultipartStagingDir } from "./stagingPaths";
+
+import { assertResolvedPathUnderBase } from "../utils/pathSanitizer";
+import { writeUtf8UnderDir } from "../utils/safeDerivedFileWrite";
 
 const WHISPER_MODEL = "whisper-1";
+const MAX_DESCRIPTION_MD_BYTES = 512 * 1024;
+const MAX_AUDIO_MANIFEST_BYTES = 64 * 1024;
 
 function openAiKey(): string {
   const k =
@@ -20,27 +23,11 @@ function openAiKey(): string {
   return k;
 }
 
-async function resolveSafeAudioPath(filePath: string): Promise<string> {
-  const baseReal = await fsP.realpath(path.resolve(ingestMultipartStagingDir()));
-  const candidate = path.resolve(baseReal, filePath);
-  let safeReal: string;
-  try {
-    safeReal = await fsP.realpath(candidate);
-    await assertRealPathUnderBase(safeReal, baseReal);
-  } catch {
-    throw new Error("Audio path must be under the server upload staging directory");
-  }
-  if (safeReal !== baseReal && !safeReal.startsWith(`${baseReal}${path.sep}`)) {
-    throw new Error("Audio path must be under the server upload staging directory");
-  }
-  return safeReal;
-}
-
-export async function sha256File(filePath: string): Promise<string> {
-  const safePath = await resolveSafeAudioPath(filePath);
+export async function sha256File(filePath: string, allowedBaseDir: string): Promise<string> {
+  assertResolvedPathUnderBase(path.resolve(filePath), path.resolve(allowedBaseDir));
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
-    const s = fs.createReadStream(safePath);
+    const s = fs.createReadStream(filePath);
     s.on("data", (chunk: Buffer | string) => hash.update(chunk));
     s.on("end", () => resolve());
     s.on("error", reject);
@@ -49,11 +36,11 @@ export async function sha256File(filePath: string): Promise<string> {
 }
 
 /** Whisper via multipart fetch (OpenAI-compatible endpoint). */
-export async function transcribeAudio(filePath: string): Promise<string> {
-  const safePath = await resolveSafeAudioPath(filePath);
-  const buf = await fsP.readFile(safePath);
+export async function transcribeAudio(filePath: string, allowedBaseDir: string): Promise<string> {
+  assertResolvedPathUnderBase(path.resolve(filePath), path.resolve(allowedBaseDir));
+  const buf = await fsP.readFile(filePath);
   const formData = new FormData();
-  formData.append("file", new File([buf], path.basename(safePath), { type: "application/octet-stream" }));
+  formData.append("file", new File([buf], path.basename(filePath), { type: "application/octet-stream" }));
   formData.append("model", WHISPER_MODEL);
 
   const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -73,8 +60,12 @@ export async function transcribeAudio(filePath: string): Promise<string> {
 export async function writeAudioIngestArtifacts(
   destDir: string,
   audioPath: string,
+  audioAllowedBaseDir: string,
 ): Promise<{ transcript: string; audioHash: string }> {
-  const [transcript, audioHash] = await Promise.all([transcribeAudio(audioPath), sha256File(audioPath)]);
+  const [transcript, audioHash] = await Promise.all([
+    transcribeAudio(audioPath, audioAllowedBaseDir),
+    sha256File(audioPath, audioAllowedBaseDir),
+  ]);
   const now = new Date().toISOString();
   const description = [
     "# Voice description (transcribed)",
@@ -84,9 +75,10 @@ export async function writeAudioIngestArtifacts(
     "",
     transcript,
   ].join("\n");
-  await fsP.writeFile(path.join(destDir, "description.md"), description, "utf8");
-  await fsP.writeFile(
-    path.join(destDir, "audio_manifest.json"),
+  await writeUtf8UnderDir(destDir, "description.md", description, MAX_DESCRIPTION_MD_BYTES);
+  await writeUtf8UnderDir(
+    destDir,
+    "audio_manifest.json",
     JSON.stringify(
       {
         audio_hash: audioHash,
@@ -97,16 +89,19 @@ export async function writeAudioIngestArtifacts(
       null,
       2,
     ),
-    "utf8",
+    MAX_AUDIO_MANIFEST_BYTES,
   );
   return { transcript, audioHash };
 }
 
 /** @deprecated use transcribeAudio */
-export async function transcribeAudioFile(audioPath: string): Promise<string> {
-  return transcribeAudio(audioPath);
+export async function transcribeAudioFile(
+  audioPath: string,
+  allowedBaseDir: string,
+): Promise<string> {
+  return transcribeAudio(audioPath, allowedBaseDir);
 }
 
-export async function ingestAudioToText(audioPath: string): Promise<string> {
-  return transcribeAudio(audioPath);
+export async function ingestAudioToText(audioPath: string, allowedBaseDir: string): Promise<string> {
+  return transcribeAudio(audioPath, allowedBaseDir);
 }

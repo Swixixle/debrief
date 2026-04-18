@@ -12,6 +12,7 @@ import { writeAudioIngestArtifacts } from "./audio_ingest";
 import { registerTempDir } from "./cleanup-registry";
 import { extractZipToDir, findProjectRoot } from "./zip-utils";
 import { assertRealPathUnderBase } from "../utils/pathSanitizer";
+import { writeUtf8UnderDir } from "../utils/safeDerivedFileWrite";
 import { ingestMultipartStagingDir } from "./stagingPaths";
 
 async function mkWorkDir(prefix: string): Promise<{ dir: string; dispose: () => Promise<void> }> {
@@ -49,8 +50,11 @@ function parseGitRemote(url: string): URL {
   return u;
 }
 
+const MAX_INGEST_MANIFEST_BYTES = 2 * 1024 * 1024;
+
 async function writeManifest(localPath: string, disk: IngestManifestDisk): Promise<void> {
-  await fs.writeFile(path.join(localPath, "ingest_manifest.json"), JSON.stringify(disk, null, 2), "utf8");
+  const payload = JSON.stringify(disk, null, 2);
+  await writeUtf8UnderDir(localPath, "ingest_manifest.json", payload, MAX_INGEST_MANIFEST_BYTES);
 }
 
 function nowIso() {
@@ -294,7 +298,11 @@ export async function ingest(input: IngestInput): Promise<IngestResult> {
         throw new Error("Audio ingest path must be under the server upload staging directory");
       }
       const { dir: tmp, dispose } = await mkWorkDir("debrief-audio-");
-      const { audioHash } = await writeAudioIngestArtifacts(tmp, resolved);
+      const { audioHash } = await writeAudioIngestArtifacts(
+        tmp,
+        resolved,
+        ingestMultipartStagingDir(),
+      );
       await writeManifest(tmp, {
         input_type: input.type,
         input_type_detail: "audio:upload",

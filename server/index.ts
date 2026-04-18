@@ -21,6 +21,7 @@ import { apiKeyAuth } from "./middleware/apiKeyAuth";
 import { upsertUserMiddleware } from "./middleware/upsertUser";
 import { withClerk } from "./middleware/clerk";
 import { apiLimiter } from "./middleware/rateLimiter";
+import { redactForLog } from "./utils/logRedaction";
 
 ensureSigningKeys();
 ensureAccessKeys();
@@ -61,15 +62,34 @@ app.use(apiKeyAuth);
 app.use(withClerk);
 app.use(upsertUserMiddleware);
 
-function isAllowedDevLoopbackOrigin(origin: string): boolean {
-  try {
-    const u = new URL(origin);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    const host = u.hostname.toLowerCase();
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
-  } catch {
-    return false;
+/** Match browser Origin header to configured allowlist using URL origins (no case-fold / substring tricks). */
+function resolveAllowedCorsOriginHeader(
+  originHeader: string | undefined,
+  allowedOrigins: string[],
+): string | null {
+  if (typeof originHeader !== "string" || originHeader.length === 0 || originHeader === "null") {
+    return null;
   }
+  let requestOrigin: string;
+  try {
+    const u = new URL(originHeader);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.username || u.password) return null;
+    requestOrigin = u.origin;
+  } catch {
+    return null;
+  }
+  for (const raw of allowedOrigins) {
+    try {
+      const o = new URL(raw);
+      if (o.origin === requestOrigin) {
+        return o.origin;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 // CORS — explicit origins only; credentials paired only when Origin is allowed (no wildcards).
@@ -88,16 +108,19 @@ app.use((req, res, next) => {
   }
 
   let corsAllowOrigin: string | null = null;
-  if (typeof origin === "string" && origin.length > 0 && origin !== "null") {
-    const normalizedOrigin = origin.toLowerCase();
-    const matchedAllowedOrigin =
-      allowedOrigins.find((o) => o.toLowerCase() === normalizedOrigin) ?? null;
-
-    // Credentialed CORS must only allow explicit, server-configured origins.
-    corsAllowOrigin = matchedAllowedOrigin;
+  if (allowedOrigins.length > 0) {
+    corsAllowOrigin = resolveAllowedCorsOriginHeader(origin, allowedOrigins);
   }
 
   if (corsAllowOrigin) {
+    const vary = res.getHeader("Vary");
+    if (!vary) {
+      res.setHeader("Vary", "Origin");
+    } else if (typeof vary === "string" && !vary.toLowerCase().includes("origin")) {
+      res.setHeader("Vary", `${vary}, Origin`);
+    } else if (Array.isArray(vary) && !vary.some((v) => String(v).toLowerCase() === "origin")) {
+      res.setHeader("Vary", [...vary, "Origin"]);
+    }
     res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   }
@@ -193,7 +216,7 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  console.log(`${formattedTime} [${source}] ${redactForLog(message, 16_000)}`);
 }
 
 app.use((req, res, next) => {

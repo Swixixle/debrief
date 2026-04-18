@@ -1,5 +1,9 @@
-import fs from "node:fs/promises";
 import path from "node:path";
+
+import { writeUtf8UnderDir } from "../utils/safeDerivedFileWrite";
+
+const MAX_SURFACE_MD_BYTES = 4 * 1024 * 1024;
+const MAX_SURFACE_JSON_BYTES = 4 * 1024 * 1024;
 
 const PROBE_PATHS = [
   "/api",
@@ -128,9 +132,10 @@ export async function buildUrlSurfaceWorkspace(targetDir: string, pageUrl: strin
     "See also `surface_snapshot.json` in this folder.",
   ].join("\n");
 
-  await fs.writeFile(path.join(targetDir, "surface_scan.md"), md, "utf8");
-  await fs.writeFile(
-    path.join(targetDir, "surface_snapshot.json"),
+  await writeUtf8UnderDir(targetDir, "surface_scan.md", md, MAX_SURFACE_MD_BYTES);
+  await writeUtf8UnderDir(
+    targetDir,
+    "surface_snapshot.json",
     JSON.stringify(
       {
         kind: "url_surface_v2",
@@ -147,6 +152,6 @@ export async function buildUrlSurfaceWorkspace(targetDir: string, pageUrl: strin
       null,
       2,
     ),
-    "utf8",
+    MAX_SURFACE_JSON_BYTES,
   );
 }

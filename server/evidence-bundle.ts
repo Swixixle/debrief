@@ -1,5 +1,49 @@
 import crypto from "crypto";
+import { z } from "zod";
 import type { Analysis } from "@shared/schema";
+
+const looseSummary = z.record(z.string(), z.unknown());
+
+/** Strict shape + size bounds for public POST /api/certificates/verify (no reliance on loose req.body). */
+export const evidenceBundleVerifySchema = z
+  .object({
+    certificate_id: z.string().max(512),
+    tenant_id: z.string().max(512),
+    analysis_id: z.number().finite(),
+    issued_at_utc: z.string().max(128),
+    signature: z.object({
+      algorithm: z.string().max(128),
+      key_id: z.string().max(256),
+      signature: z.string().max(500_000),
+      canonical_message: z.string().max(500_000),
+    }),
+    hashes: z.object({
+      note_hash: z.string().max(512),
+      hash_algorithm: z.string().max(64),
+    }),
+    model_info: z.object({
+      model_version: z.string().max(512).nullable(),
+      prompt_version: z.string().max(512).nullable(),
+      governance_policy_version: z.string().max(512).nullable(),
+      policy_hash: z.string().max(512).nullable(),
+    }),
+    human_attestation: z.object({
+      human_reviewed: z.boolean(),
+      reviewer_hash: z.string().max(512).nullable(),
+      ehr_referenced_at: z.string().max(256).nullable(),
+    }),
+    verification_instructions: z.object({
+      steps: z.array(z.string().max(8000)).max(500),
+    }),
+    public_key_pem: z.string().max(500_000),
+    analysis_data: z.object({
+      dossier_excerpt: z.string().max(2_000_000),
+      claims_count: z.number().finite(),
+      coverage_summary: looseSummary,
+      operate_summary: looseSummary,
+    }),
+  })
+  .strict();
 
 export interface EvidenceBundleOptions {
   analysisId: number;
