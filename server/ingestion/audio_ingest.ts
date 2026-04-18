@@ -21,13 +21,19 @@ function openAiKey(): string {
 }
 
 async function resolveSafeAudioPath(filePath: string): Promise<string> {
-  const resolved = path.resolve(filePath);
+  const baseReal = await fsP.realpath(path.resolve(ingestMultipartStagingDir()));
+  const candidate = path.resolve(baseReal, filePath);
+  let safeReal: string;
   try {
-    await assertRealPathUnderBase(resolved, ingestMultipartStagingDir());
+    safeReal = await fsP.realpath(candidate);
+    await assertRealPathUnderBase(safeReal, baseReal);
   } catch {
     throw new Error("Audio path must be under the server upload staging directory");
   }
-  return resolved;
+  if (safeReal !== baseReal && !safeReal.startsWith(`${baseReal}${path.sep}`)) {
+    throw new Error("Audio path must be under the server upload staging directory");
+  }
+  return safeReal;
 }
 
 export async function sha256File(filePath: string): Promise<string> {
