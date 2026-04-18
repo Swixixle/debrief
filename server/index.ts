@@ -93,13 +93,8 @@ app.use((req, res, next) => {
     const matchedAllowedOrigin =
       allowedOrigins.find((o) => o.toLowerCase() === normalizedOrigin) ?? null;
 
-    if (process.env.NODE_ENV === "production") {
-      corsAllowOrigin = matchedAllowedOrigin;
-    } else if (matchedAllowedOrigin) {
-      corsAllowOrigin = matchedAllowedOrigin;
-    } else if (isAllowedDevLoopbackOrigin(origin)) {
-      corsAllowOrigin = origin;
-    }
+    // Credentialed CORS must only allow explicit, server-configured origins.
+    corsAllowOrigin = matchedAllowedOrigin;
   }
 
   if (corsAllowOrigin) {
