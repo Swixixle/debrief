@@ -62,43 +62,31 @@ app.use(apiKeyAuth);
 app.use(withClerk);
 app.use(upsertUserMiddleware);
 
-/** Match browser Origin header to configured allowlist using URL origins (no case-fold / substring tricks). */
-function resolveAllowedCorsOriginHeader(
-  originHeader: string | undefined,
-  allowedOrigins: string[],
-): string | null {
-  if (typeof originHeader !== "string" || originHeader.length === 0 || originHeader === "null") {
-    return null;
-  }
-  let requestOrigin: string;
-  try {
-    const u = new URL(originHeader);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    if (u.username || u.password) return null;
-    requestOrigin = u.origin;
-  } catch {
-    return null;
-  }
-  for (const raw of allowedOrigins) {
+/** Origins allowed for credentialed CORS — derived only from ALLOWED_ORIGINS (never from raw header text). */
+function canonicalizeAllowedCorsOriginsFromEnv(): string[] {
+  const raw = process.env.ALLOWED_ORIGINS?.trim() ?? "";
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const t = part.trim();
+    if (!t) continue;
     try {
-      const o = new URL(raw);
-      if (o.origin === requestOrigin) {
-        return o.origin;
-      }
+      const u = new URL(t);
+      if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+      if (u.username || u.password) continue;
+      out.push(u.origin);
     } catch {
       continue;
     }
   }
-  return null;
+  return out;
 }
 
 // CORS — explicit origins only; credentials paired only when Origin is allowed (no wildcards).
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
+  const originHdr = req.headers.origin;
   const rawOrigins = process.env.ALLOWED_ORIGINS?.trim() ?? "";
-  const allowedOrigins = rawOrigins
-    ? rawOrigins.split(",").map((o) => o.trim()).filter(Boolean)
-    : [];
+  const allowedOrigins = canonicalizeAllowedCorsOriginsFromEnv();
 
   // R6 mitigation — warning is intentional, do not remove.
   if (process.env.NODE_ENV === "production" && !rawOrigins) {
@@ -107,12 +95,25 @@ app.use((req, res, next) => {
     );
   }
 
-  let corsAllowOrigin: string | null = null;
-  if (allowedOrigins.length > 0) {
-    corsAllowOrigin = resolveAllowedCorsOriginHeader(origin, allowedOrigins);
+  let reflectOriginFromConfig: string | undefined;
+  if (
+    allowedOrigins.length > 0 &&
+    typeof originHdr === "string" &&
+    originHdr.length > 0 &&
+    originHdr !== "null"
+  ) {
+    try {
+      const u = new URL(originHdr);
+      if ((u.protocol === "http:" || u.protocol === "https:") && !u.username && !u.password) {
+        const clientOrigin = u.origin;
+        reflectOriginFromConfig = allowedOrigins.find((o) => o === clientOrigin);
+      }
+    } catch {
+      reflectOriginFromConfig = undefined;
+    }
   }
 
-  if (corsAllowOrigin) {
+  if (reflectOriginFromConfig) {
     const vary = res.getHeader("Vary");
     if (!vary) {
       res.setHeader("Vary", "Origin");
@@ -121,7 +122,7 @@ app.use((req, res, next) => {
     } else if (Array.isArray(vary) && !vary.some((v) => String(v).toLowerCase() === "origin")) {
       res.setHeader("Vary", [...vary, "Origin"]);
     }
-    res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
+    res.setHeader("Access-Control-Allow-Origin", reflectOriginFromConfig);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   }
 

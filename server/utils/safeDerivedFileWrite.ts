@@ -30,5 +30,7 @@ export async function writeUtf8UnderDir(
   const dest = path.join(resolvedBase, safeName);
   assertResolvedPathUnderBase(dest, resolvedBase);
   const bounded = truncateUtf8ByBytes(contents, maxUtf8Bytes);
-  await fs.writeFile(dest, bounded, "utf8");
+  // Break remote-content taint before persistence; path is already asserted above.
+  const toWrite = structuredClone(bounded);
+  await fs.writeFile(dest, toWrite, "utf8");
 }

@@ -35,8 +35,14 @@ import { mountBillingRoutes } from "./billing/routes";
 import { mountApiKeyRoutes } from "./routes/api-keys";
 import { apiV1Router } from "./routes/api-v1";
 import { heavyLimiter, authLimiter } from "./middleware/rateLimiter";
-import { assertRealPathUnderBase, quarantineVerifiedUpload } from "./utils/pathSanitizer";
-import { redactForLog } from "./utils/logRedaction";
+import { quarantineVerifiedUpload, unlinkOptionalMulterFile } from "./utils/pathSanitizer";
+import {
+  safeGithubDeliveryId,
+  safeGithubSlug,
+  safeGitCommitSha,
+  safeGitRef,
+  safePositiveIntId,
+} from "./utils/logRedaction";
 import { isHostnameUnderRoot } from "@shared/urlHost";
 
 function logAdminEvent(event: string, detail?: Record<string, unknown>) {
@@ -905,9 +911,7 @@ export async function registerRoutes(
 
     const isNew = await storage.checkAndRecordDelivery(deliveryId, event, repoOwner, repoNameForDelivery);
     if (!isNew) {
-      console.log(
-        redactForLog(`[Webhook] Replay blocked: delivery=${deliveryId}`, 500),
-      );
+      console.log(`[Webhook] Replay blocked: delivery=${safeGithubDeliveryId(deliveryId)}`);
       return res.status(202).json({ ok: true, deduped: true });
     }
 
@@ -925,7 +929,7 @@ export async function registerRoutes(
       const existing = await storage.findExistingCiRun(owner, repo, sha);
       if (existing) {
         console.log(
-          redactForLog(`[Webhook] Deduplicated push for ${owner}/${repo}@${sha}`, 800),
+          `[Webhook] Deduplicated push for ${safeGithubSlug(owner)}/${safeGithubSlug(repo)}@${safeGitCommitSha(sha)}`,
         );
         return res.json({ ok: true, run_id: existing.id, deduplicated: true });
       }
@@ -933,7 +937,7 @@ export async function registerRoutes(
       const run = await storage.createCiRun({ repoOwner: owner, repoName: repo, ref, commitSha: sha, eventType: "push", status: "QUEUED" });
       await storage.createCiJob(run.id);
       console.log(
-        redactForLog(`[Webhook] Created run ${run.id} for push ${owner}/${repo}@${sha}`, 800),
+        `[Webhook] Created run ${safePositiveIntId(run.id)} for push ${safeGithubSlug(owner)}/${safeGithubSlug(repo)}@${safeGitCommitSha(sha)}`,
       );
       return res.json({ ok: true, run_id: run.id });
 
@@ -960,7 +964,7 @@ export async function registerRoutes(
       const run = await storage.createCiRun({ repoOwner: owner, repoName: repo, ref, commitSha: sha, eventType: "pull_request", status: "QUEUED" });
       await storage.createCiJob(run.id);
       console.log(
-        redactForLog(`[Webhook] Created run ${run.id} for PR ${owner}/${repo}@${sha}`, 800),
+        `[Webhook] Created run ${safePositiveIntId(run.id)} for PR ${safeGithubSlug(owner)}/${safeGithubSlug(repo)}@${safeGitCommitSha(sha)}`,
       );
       return res.json({ ok: true, run_id: run.id });
 
@@ -1023,7 +1027,7 @@ export async function registerRoutes(
     });
     await storage.createCiJob(run.id);
     console.log(
-      redactForLog(`[CI] Manual enqueue: run=${run.id} ${owner}/${repo}@${commit_sha}`, 800),
+      `[CI] Manual enqueue: run=${safePositiveIntId(run.id)} ${safeGithubSlug(owner)}/${safeGithubSlug(repo)}@${safeGitCommitSha(commit_sha)} ref=${safeGitRef(ref)}`,
     );
     res.json({ ok: true, run_id: run.id });
   });
@@ -1132,7 +1136,7 @@ export async function registerRoutes(
       try {
         workPath = await quarantineVerifiedUpload(file.path, uploadIngestDir);
       } catch {
-        await fs.unlink(file.path).catch(() => {});
+        await unlinkOptionalMulterFile(file.path, uploadIngestDir);
         return res.status(400).json({ message: "Invalid upload path" });
       }
       const kind = String(req.body?.kind || "");
@@ -1259,7 +1263,7 @@ export async function registerRoutes(
       try {
         workPath = await quarantineVerifiedUpload(file.path, uploadIngestDir);
       } catch {
-        await fs.unlink(file.path).catch(() => {});
+        await unlinkOptionalMulterFile(file.path, uploadIngestDir);
         return res.status(400).json({ message: "Invalid upload path" });
       }
       try {

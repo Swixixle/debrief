@@ -50,8 +50,10 @@ export function assertResolvedPathUnderBase(candidatePath: string, baseDir: stri
 /**
  * Like {@link assertResolvedPathUnderBase}, but resolves symlinks so a path under `baseDir`
  * cannot point at files outside via symlink (TOCTOU-hardening for ingest files).
+ *
+ * @returns Canonical filesystem path safe to pass to read/copy/unlink after success.
  */
-export async function assertRealPathUnderBase(candidatePath: string, baseDir: string): Promise<void> {
+export async function assertRealPathUnderBase(candidatePath: string, baseDir: string): Promise<string> {
   const base = path.resolve(baseDir);
   const resolved = path.resolve(candidatePath);
   let baseReal: string;
@@ -60,17 +62,20 @@ export async function assertRealPathUnderBase(candidatePath: string, baseDir: st
   } catch {
     baseReal = base;
   }
-  let candidateReal: string;
   try {
-    // codeql[js/path-injection]: realpath is used for symlink resolution; the result is rejected unless it stays under baseReal (see relative-path check below).
-    candidateReal = await fs.realpath(resolved);
-  } catch {
+    // Symlink resolution: candidateReal must remain under baseReal (checked below).
+    const candidateReal = await fs.realpath(resolved);
+    const rel = path.relative(baseReal, candidateReal);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new Error("Path not under allowed directory");
+    }
+    return candidateReal;
+  } catch (err) {
+    if (err instanceof Error && err.message === "Path not under allowed directory") {
+      throw err;
+    }
     assertResolvedPathUnderBase(candidatePath, baseDir);
-    return;
-  }
-  const rel = path.relative(baseReal, candidateReal);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error("Path not under allowed directory");
+    return resolved;
   }
 }
 
@@ -82,11 +87,26 @@ export async function quarantineVerifiedUpload(
   multerPath: string,
   uploadBaseDir: string,
 ): Promise<string> {
-  await assertRealPathUnderBase(multerPath, uploadBaseDir);
+  const verifiedSource = await assertRealPathUnderBase(multerPath, uploadBaseDir);
   const safeName = `q-${Date.now()}-${randomBytes(12).toString("hex")}`;
-  const dest = path.join(uploadBaseDir, safeName);
-  assertResolvedPathUnderBase(dest, uploadBaseDir);
-  await fs.copyFile(multerPath, dest);
-  await fs.unlink(multerPath).catch(() => {});
+  const resolvedBase = path.resolve(uploadBaseDir);
+  const dest = path.join(resolvedBase, safeName);
+  assertResolvedPathUnderBase(dest, resolvedBase);
+  await fs.copyFile(verifiedSource, dest);
+  await fs.unlink(verifiedSource);
   return dest;
+}
+
+/** Best-effort unlink of a multer temp file only when it resolves under the upload base. */
+export async function unlinkOptionalMulterFile(
+  multerPath: string | undefined,
+  uploadBaseDir: string,
+): Promise<void> {
+  if (!multerPath) return;
+  try {
+    const p = await assertRealPathUnderBase(multerPath, uploadBaseDir);
+    await fs.unlink(p);
+  } catch {
+    /* ignore */
+  }
 }
