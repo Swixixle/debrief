@@ -87,18 +87,23 @@ app.use((req, res, next) => {
     );
   }
 
-  let allowThisOrigin = false;
-  if (typeof origin === "string" && origin.length > 0) {
+  let corsAllowOrigin: string | null = null;
+  if (typeof origin === "string" && origin.length > 0 && origin !== "null") {
+    const normalizedOrigin = origin.toLowerCase();
+    const matchedAllowedOrigin =
+      allowedOrigins.find((o) => o.toLowerCase() === normalizedOrigin) ?? null;
+
     if (process.env.NODE_ENV === "production") {
-      allowThisOrigin = allowedOrigins.includes(origin);
-    } else {
-      allowThisOrigin =
-        allowedOrigins.includes(origin) || isAllowedDevLoopbackOrigin(origin);
+      corsAllowOrigin = matchedAllowedOrigin;
+    } else if (matchedAllowedOrigin) {
+      corsAllowOrigin = matchedAllowedOrigin;
+    } else if (isAllowedDevLoopbackOrigin(origin)) {
+      corsAllowOrigin = origin;
     }
   }
 
-  if (allowThisOrigin) {
-    res.setHeader("Access-Control-Allow-Origin", origin as string);
+  if (corsAllowOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   }
 
