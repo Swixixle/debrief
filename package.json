@@ -120,7 +120,7 @@
     "@tauri-apps/cli": "^2.10.1",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^5.0.0",
-    "@types/express-session": "^1.18.0",
+    "@types/express-session": "^1.19.0",
     "@types/multer": "^2.1.0",
     "@types/node": "^20.19.39",
     "@types/node-cron": "^3.0.11",
