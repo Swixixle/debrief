@@ -24,3 +24,5 @@ __pycache__/
 **/fixtures/**/.git
 **/tmp/**
 **/monitor/**/.git
+# stray nested checkout (separate git repo) — do not track
+/PTA_REPO-RECON/

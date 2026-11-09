@@ -843,7 +843,6 @@ RULES:
 """
 
         user_content = (
-            packs = {};
 
             f"DOCS:\n{packs.get('docs', '')[:40000]}\n\n"
             f"CONFIG:\n{packs.get('config', '')[:40000]}\n\n"
